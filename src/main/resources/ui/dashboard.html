@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>تهران برق — Cluster</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="/static/app.css"/>
+  <style>
+    .work { min-height: 100vh; }
+    .body { padding: var(--pad); display: grid; gap: var(--gap); max-width: 960px; }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--gap); }
+    .port {
+      padding: 16px;
+      border-bottom: 1px solid var(--rule);
+      display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+    }
+    .port:last-child { border-bottom: none; }
+    .port a { color: var(--text); font-family: var(--mono); }
+    .port a:hover { color: var(--chart); }
+    code {
+      font-family: var(--mono);
+      font-size: 12px;
+      background: var(--raised);
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    .steps { margin: 0; padding: 12px 16px 16px 32px; color: var(--muted); font-size: var(--fs-small); line-height: 1.6; }
+    @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<div class="shell">
+  <nav class="rail" aria-label="ناوبری">
+    <div class="mark" title="تهران برق">TP</div>
+    <a href="/city" title="نقشه شهر">MAP</a>
+    <a href="/viewer" title="شاردها">SHD</a>
+    <a href="/dashboard" aria-current="page" title="کلاستر">CLS</a>
+    <a href="/lab" title="Actor Lab">LAB</a>
+    <div class="spacer"></div>
+  </nav>
+  <div class="work">
+    <header class="top">
+      <div>
+        <h1>کلاستر</h1>
+        <div class="sub">۳ نود Pekko · HTTP روی ۹۵۵۱–۹۵۵۳</div>
+      </div>
+      <div class="kpis">
+        <div class="kpi"><span class="label">نود</span><span class="value">3</span></div>
+        <div class="kpi"><span class="label">منطقه</span><span class="value">22</span></div>
+        <div class="kpi"><span class="label">ظرفیت/منطقه</span><span class="value mw">220 MW</span></div>
+      </div>
+    </header>
+    <div class="body">
+      <div class="grid">
+        <section class="panel">
+          <div class="panel-h"><h2>نقاط ورود</h2><p>هر نود همان UI را سرو می‌کند</p></div>
+          <div>
+            <div class="port"><span>seed</span><a href="http://127.0.0.1:9551/city">9551 /city</a></div>
+            <div class="port"><span>node2</span><a href="http://127.0.0.1:9552/city">9552 /city</a></div>
+            <div class="port"><span>node3</span><a href="http://127.0.0.1:9553/city">9553 /city</a></div>
+          </div>
+        </section>
+        <section class="panel">
+          <div class="panel-h"><h2>ابزارها</h2><p>نقشه · شارد · این صفحه</p></div>
+          <div>
+            <div class="port"><span>نقشه بار</span><a href="/city">/city</a></div>
+            <div class="port"><span>توزیع شارد</span><a href="/viewer">/viewer</a></div>
+            <div class="port"><span>سلامت</span><a href="/health">/health</a></div>
+          </div>
+        </section>
+        <section class="panel">
+          <div class="panel-h"><h2>سناریو بار</h2><p>شبیه‌سازی نه بازی</p></div>
+          <div class="steps">
+            <li>سناریو: ظهر تابستان / شب زمستان / موج گرما / آرام</li>
+            <li>منطقه را روی نقشه بزن (دریل محله)</li>
+            <li>«قطع ۵ پرمصرف» یا موج گرما</li>
+            <li>ناظر DSM پرمصرف را قطع می‌کند</li>
+          </div>
+        </section>
+      </div>
+      <section class="panel">
+        <div class="panel-h"><h2>Node-fail demo</h2><p>شاردینگ زنده — یک نود را بکش</p></div>
+        <div class="steps" style="list-style:none;padding-right:16px">
+          <div>۱. <a href="/viewer">/viewer</a> را باز کن</div>
+          <div style="margin-top:8px">۲. <code>./scripts/node-fail-demo.sh node3</code></div>
+          <div style="margin-top:8px">۳. Up از ۳→۲؛ شاردها از node3 می‌روند</div>
+          <div style="margin-top:8px">۴. بعد از ~۲۵ث node3 برمی‌گردد</div>
+          <div style="margin-top:8px"><code>curl -s http://127.0.0.1:9551/api/cluster</code></div>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="panel-h"><h2>اجرا</h2><p>محلی یا Docker</p></div>
+        <div class="steps" style="list-style:none;padding-right:16px">
+          <div><code>python3 scripts/local-cluster.py start</code></div>
+          <div style="margin-top:8px"><code>./scripts/docker-up.sh</code> → سپس <a href="http://127.0.0.1:9551/city">9551/city</a></div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+</body>
+</html>

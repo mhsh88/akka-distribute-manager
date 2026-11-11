@@ -1,0 +1,194 @@
+/* Town Power — achromatic ledger (dark control-room face)
+   Chrome = ink only. One chart hue on MW / load data. */
+:root {
+  --ground: #0c0c0e;
+  --surface: #141416;
+  --raised: #1c1c1f;
+  --border: #2a2a2e;
+  --rule: #222226;
+  --control: #3a3a40;
+  --text: #f5f5f5;
+  --muted: #8a8a8e;
+  --accent: #f5f5f5;
+  --positive: #3d9a4a;
+  --negative: #d64545;
+  --warning: #c9a227;
+  --chart: #3d7dd6;
+  --radius-card: 8px;
+  --radius-control: 6px;
+  --gap: 12px;
+  --pad: 24px;
+  --control-height: 36px;
+  --fs-title: 24px;
+  --fs-section: 16px;
+  --fs-kpi: 30px;
+  --fs-body: 14px;
+  --fs-small: 12px;
+  --font: "Geist", "IBM Plex Sans", system-ui, sans-serif;
+  --mono: "Geist Mono", "IBM Plex Mono", ui-monospace, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--ground);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: var(--fs-body);
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+}
+button, input { font: inherit; }
+a { color: var(--muted); text-decoration: none; }
+a:hover { color: var(--text); }
+a:focus-visible, button:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+html, body { height: 100%; overflow: hidden; }
+.shell {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  height: 100%;
+  min-height: 0;
+}
+.rail {
+  border-left: 1px solid var(--border);
+  background: var(--ground);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 12px 0;
+  gap: 8px;
+}
+.rail .mark {
+  width: 32px; height: 32px;
+  display: grid; place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text);
+  margin-bottom: 12px;
+}
+.rail a {
+  width: 40px; height: 40px;
+  display: grid; place-items: center;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-family: var(--mono);
+}
+.rail a[aria-current="page"] {
+  color: var(--text);
+  background: var(--raised);
+}
+.rail .spacer { flex: 1; }
+
+.top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--gap);
+  flex-wrap: wrap;
+  padding: 16px var(--pad) 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.top h1 {
+  margin: 0;
+  font-size: var(--fs-title);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+.top .sub {
+  color: var(--muted);
+  font-size: var(--fs-small);
+  margin-top: 2px;
+}
+.kpis {
+  display: flex;
+  gap: 28px;
+  flex-wrap: wrap;
+  align-items: baseline;
+}
+.kpi .label {
+  display: block;
+  font-size: var(--fs-small);
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+.kpi .value {
+  font-size: var(--fs-kpi);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--mono);
+  line-height: 1;
+}
+.kpi .value.mw { color: var(--chart); }
+.kpi .value.bad { color: var(--negative); }
+.kpi .value.warn { color: var(--warning); }
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+.panel-h {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.panel-h h2 {
+  margin: 0;
+  font-size: var(--fs-section);
+  font-weight: 500;
+}
+.panel-h p {
+  margin: 4px 0 0;
+  font-size: var(--fs-small);
+  color: var(--muted);
+  line-height: 1.4;
+}
+.panel-b { padding: 8px 0; }
+
+.btn {
+  height: var(--control-height);
+  padding: 0 14px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--control);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: var(--fs-small);
+}
+.btn:hover { background: var(--raised); }
+.btn.primary {
+  background: var(--text);
+  color: var(--ground);
+  border-color: var(--text);
+}
+.btn.primary:hover { opacity: 0.9; }
+.btn.on {
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.muted { color: var(--muted); }
+.small { font-size: var(--fs-small); }
+
+@media (max-width: 900px) {
+  html, body { overflow: auto; }
+  .shell { grid-template-columns: 1fr; height: auto; min-height: 100%; }
+  .rail {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 40;
+    flex-direction: row; justify-content: space-around;
+    border-left: none; border-top: 1px solid var(--border);
+    padding: 6px 8px; height: 56px;
+  }
+  .rail .mark, .rail .spacer { display: none; }
+  .shell > .work { padding-bottom: 64px; height: auto; min-height: calc(100vh - 56px); }
+}

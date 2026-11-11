@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>تهران برق — نقشه بار</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <link rel="stylesheet" href="/static/app.css"/>
+  <style>
+    .work {
+      display: flex; flex-direction: column;
+      height: 100%; min-height: 0; min-width: 0; overflow: hidden;
+    }
+    .top { flex: 0 0 auto; }
+    .top-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .scenarios { display: flex; gap: 6px; flex-wrap: wrap; }
+    .scenarios .scen.active {
+      border-color: var(--chart); color: var(--chart);
+    }
+    .clock {
+      display: flex; align-items: center; gap: 8px; min-width: 200px;
+      height: var(--control-height); padding: 0 10px;
+      border: 1px solid var(--border); border-radius: var(--radius-control);
+      background: var(--raised);
+    }
+    .clock input[type=range] { flex: 1; accent-color: var(--chart); }
+    .clock label { font-size: var(--fs-small); color: var(--muted); white-space: nowrap; }
+    main.map-layout {
+      display: grid; grid-template-columns: 1fr 300px;
+      flex: 1 1 auto; min-height: 0; height: 0; /* fill leftover under header */
+    }
+    #mapWrap { position: relative; min-height: 0; height: 100%; }
+    #map { position: absolute; inset: 0; }
+    #ticker {
+      position: absolute; inset-inline-start: 12px; bottom: 28px; z-index: 500;
+      display: flex; flex-direction: column; gap: 6px; pointer-events: none; max-width: 360px;
+    }
+    .toast {
+      background: var(--surface); border: 1px solid var(--border); border-right: 2px solid var(--chart);
+      padding: 10px 12px; border-radius: var(--radius-control); font-size: var(--fs-small); color: var(--text);
+    }
+    .toast.bad { border-right-color: var(--negative); }
+    .toast.good { border-right-color: var(--positive); }
+    .toast.info { border-right-color: var(--warning); }
+    aside.side {
+      border-right: 1px solid var(--border); background: var(--surface);
+      padding: 16px; overflow: auto;
+    }
+    aside.side h2 {
+      margin: 16px 0 8px; font-size: var(--fs-section); font-weight: 500;
+    }
+    aside.side h2:first-child { margin-top: 0; }
+    .hint { font-size: var(--fs-small); color: var(--muted); margin: 0 0 12px; line-height: 1.45; }
+    .district {
+      margin-bottom: 10px; font-size: var(--fs-small); color: var(--text);
+      cursor: pointer; padding: 6px 8px; border-radius: 6px; border: 1px solid transparent;
+    }
+    .district:hover { background: var(--raised); }
+    .district.focus { border-color: var(--chart); background: var(--raised); }
+    .district label { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--text); cursor: pointer; }
+    .district .bar { height: 8px; background: var(--raised); border-radius: 4px; overflow: hidden; margin-top: 4px; }
+    .district .fill { height: 100%; background: var(--chart); width: 0%; }
+    .district.out label { color: var(--negative); }
+    .district.out .fill { background: var(--negative); opacity: 0.35; width: 100% !important; }
+    #drillPanel { margin-bottom: 12px; }
+    #drillPanel .row {
+      display: flex; justify-content: space-between; gap: 8px; align-items: baseline;
+      padding: 6px 0; border-bottom: 1px solid var(--rule); font-size: var(--fs-small);
+      font-family: var(--mono); font-variant-numeric: tabular-nums; cursor: pointer;
+    }
+    #drillPanel .row:hover { color: var(--chart); }
+    #detail { margin-top: 16px; font-size: var(--fs-small); line-height: 1.5; color: var(--muted); }
+    #detail b { color: var(--text); font-weight: 500; }
+    #actions { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 8px; }
+    #heavyList div {
+      font-size: var(--fs-small); padding: 6px 0;
+      border-bottom: 1px solid var(--rule);
+      font-variant-numeric: tabular-nums;
+      font-family: var(--mono);
+    }
+    .leaflet-container { background: var(--ground); font: inherit; }
+    .bolt-line {
+      stroke: var(--warning); stroke-width: 2; fill: none; stroke-linecap: round;
+      animation: boltFlash 0.9s ease-out forwards;
+    }
+    @keyframes boltFlash {
+      0% { stroke-opacity: 1; stroke-width: 3; }
+      100% { stroke-opacity: 0; stroke-width: 1; }
+    }
+    .crit-icon {
+      width: 26px; height: 26px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; line-height: 1;
+      border: 1px solid var(--chart); background: var(--surface); color: var(--chart);
+      font-family: var(--mono);
+    }
+    .crit-icon.hospital { border-color: var(--negative); color: var(--negative); }
+    .crit-icon.metro { border-color: var(--chart); color: var(--chart); }
+    .crit-icon.stadium { border-color: var(--positive); color: var(--positive); }
+    .crit-icon.dark { border-color: var(--control); color: var(--muted); opacity: 0.7; }
+    @media (max-width: 900px) {
+      main.map-layout { grid-template-columns: 1fr; }
+      aside.side { border-right: none; border-top: 1px solid var(--border); max-height: 40vh; }
+    }
+  </style>
+</head>
+<body>
+<div class="shell">
+  <nav class="rail" aria-label="ناوبری">
+    <div class="mark" title="تهران برق">TP</div>
+    <a href="/city" aria-current="page" title="نقشه شهر">MAP</a>
+    <a href="/viewer" title="شاردها">SHD</a>
+    <a href="/dashboard" title="کلاستر">CLS</a>
+    <a href="/lab" title="Actor Lab">LAB</a>
+    <div class="spacer"></div>
+  </nav>
+  <div class="work">
+    <header class="top">
+      <div>
+        <h1>نقشه بار تهران</h1>
+        <div class="sub">۲۲ منطقه · شبیه‌سازی MW · ناظر DSM</div>
+      </div>
+      <div class="kpis">
+        <div class="kpi"><span class="label">نود</span><span class="value" id="members">—</span></div>
+        <div class="kpi"><span class="label">محله</span><span class="value" id="nb">—</span></div>
+        <div class="kpi"><span class="label">خاموش</span><span class="value bad" id="bo">—</span></div>
+        <div class="kpi"><span class="label">بار</span><span class="value mw" id="load">—</span></div>
+        <div class="kpi"><span class="label">حاشیه</span><span class="value mw" id="marginNow">—</span></div>
+        <div class="kpi"><span class="label">قطع ناظر</span><span class="value warn" id="shedCount">0</span></div>
+      </div>
+      <div class="top-actions">
+        <div class="clock">
+          <label id="hourLabel">ساعت: زنده</label>
+          <input id="hourSlider" type="range" min="0" max="23" step="1" value="14"/>
+          <button id="liveBtn" class="btn" type="button">زنده</button>
+        </div>
+        <div class="scenarios" role="group" aria-label="سناریو">
+          <button type="button" class="btn scen" data-scenario="summer">ظهر تابستان</button>
+          <button type="button" class="btn scen" data-scenario="winter">شب زمستان</button>
+          <button type="button" class="btn scen" data-scenario="heatwave">موج گرما</button>
+          <button type="button" class="btn scen" data-scenario="calm">آرام</button>
+        </div>
+        <button id="focusBtn" class="btn" type="button">تمرکز</button>
+        <button id="clearDistrictBtn" class="btn" type="button" hidden>همه مناطق</button>
+        <button id="stressBtn" class="btn primary" type="button">موج گرما</button>
+      </div>
+    </header>
+    <main class="map-layout">
+      <div id="mapWrap">
+        <div id="map"></div>
+        <div id="ticker" aria-live="polite"></div>
+      </div>
+      <aside class="side">
+        <h2>شبیه‌سازی</h2>
+        <p class="hint">منطقه را بزن → محله‌های همان منطقه. ناظر DSM پرمصرف را قطع می‌کند.</p>
+        <div id="drillPanel" hidden>
+          <h2 id="drillTitle">منطقه</h2>
+          <p class="hint" id="drillMeta"></p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+            <button type="button" class="btn" id="shedTopBtn">قطع ۵ پرمصرف</button>
+            <button type="button" class="btn" id="drillClearBtn">بستن</button>
+          </div>
+          <div id="drillList"></div>
+        </div>
+        <h2>پرمصرف‌ها</h2>
+        <div id="heavyList" class="hint"></div>
+        <h2>مناطق</h2>
+        <div id="districts"></div>
+        <div id="detail">یک محله یا منطقه را بزن.</div>
+        <div id="actions"></div>
+      </aside>
+    </main>
+  </div>
+</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const districtsEl = document.getElementById('districts');
+const detail = document.getElementById('detail');
+const actions = document.getElementById('actions');
+const stressBtn = document.getElementById('stressBtn');
+const hourSlider = document.getElementById('hourSlider');
+const hourLabel = document.getElementById('hourLabel');
+const liveBtn = document.getElementById('liveBtn');
+const ticker = document.getElementById('ticker');
+const marginNowEl = document.getElementById('marginNow');
+const shedCountEl = document.getElementById('shedCount');
+const heavyListEl = document.getElementById('heavyList');
+
+let state = { neighborhoods: [], districtSums: [], blackouts: [], capacity: 0, stress: false, members: 0, hour: -1, hourLive: true };
+let selected = null;
+/** null = city-wide; number = drill into that منطقه */
+let focusedDistrict = null;
+let districtLayer;
+let hourDebounce;
+const clearDistrictBtn = document.getElementById('clearDistrictBtn');
+const drillPanel = document.getElementById('drillPanel');
+const drillTitle = document.getElementById('drillTitle');
+const drillMeta = document.getElementById('drillMeta');
+const drillList = document.getElementById('drillList');
+const shedTopBtn = document.getElementById('shedTopBtn');
+const drillClearBtn = document.getElementById('drillClearBtn');
+const markerById = new Map();
+const critById = new Map();
+let prevBlackouts = new Set();
+let prevCritStatus = new Map();
+let prevShed = new Set();
+let prevStress = false;
+
+const CRIT_GLYPH = { hospital: '＋', metro: 'Ｍ', stadium: '◆' };
+const CRIT_LABEL = { hospital: 'بیمارستان', metro: 'مترو', stadium: 'ورزشگاه' };
+
+const map = L.map('map', { zoomControl: true }).setView([35.6892, 51.3890], 11);
+// Carto free basemaps now return "API KEY REQUIRED" watermark tiles — use Esri dark gray (no key).
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+  attribution: 'Tiles &copy; Esri — Source: Esri, HERE, Garmin',
+  maxZoom: 16
+}).addTo(map);
+function fixMapSize() {
+  map.invalidateSize({ animate: false });
+}
+window.addEventListener('resize', fixMapSize);
+requestAnimationFrame(() => { fixMapSize(); setTimeout(fixMapSize, 200); });
+
+const markers = L.layerGroup().addTo(map);
+const bolts = L.layerGroup().addTo(map);
+let neighborsByDistrict = {};
+let districtCentroids = {};
+
+Promise.all([
+  fetch('/static/geo/district-neighbors.json').then(r => r.json()),
+  fetch('/static/geo/district-centroids.json').then(r => r.json()),
+  fetch('/static/geo/critical-sites.json').then(r => r.json())
+]).then(([nbr, cents, crit]) => {
+  neighborsByDistrict = nbr;
+  districtCentroids = cents;
+  for (const s of crit || []) critById.set(s.id, s);
+}).catch(() => {});
+
+function boltPath(fromId, toId) {
+  const a = districtCentroids[String(fromId)] || districtCentroids[fromId];
+  const b = districtCentroids[String(toId)] || districtCentroids[toId];
+  if (!a || !b) return null;
+  // slight mid bump so line looks like a strike, not a road
+  const mid = [(a[0] + b[0]) / 2 + (Math.random() - 0.5) * 0.01, (a[1] + b[1]) / 2 + (Math.random() - 0.5) * 0.01];
+  return [a, mid, b];
+}
+
+function strikeLightning(fromId, toId) {
+  const latlngs = boltPath(fromId, toId);
+  if (!latlngs) return;
+  const line = L.polyline(latlngs, {
+    color: '#ffd166',
+    weight: 3,
+    opacity: 1,
+    className: 'bolt-line',
+    interactive: false
+  }).addTo(bolts);
+  setTimeout(() => bolts.removeLayer(line), 1000);
+}
+
+function pushToast(text, kind) {
+  const el = document.createElement('div');
+  el.className = 'toast ' + (kind || 'info');
+  el.textContent = text;
+  ticker.prepend(el);
+  while (ticker.children.length > 5) ticker.lastChild.remove();
+  setTimeout(() => el.remove(), 6500);
+}
+
+function statusText(s) {
+  if (s === 'B') return 'خاموشی آبشاری';
+  if (s === 'S') return 'قطع ناظر / DSM';
+  return 'روشن';
+}
+
+function districtStyle(feature) {
+  const id = feature.properties.districtId;
+  const out = (state.blackouts || []).includes(id);
+  const sum = (state.districtSums || [])[id] || 0;
+  const cap = state.capacity || 1;
+  const t = Math.min(1, sum / cap);
+  const focused = focusedDistrict != null && focusedDistrict === id;
+  const dim = focusedDistrict != null && !focused;
+  const fill = out ? '#1a1a1a' : `rgb(${18 + t * 40},${40 + t * 50},${70 + t * 110})`;
+  return {
+    color: out ? '#d64545' : (focused ? '#6ea8ff' : '#3d7dd6'),
+    weight: focused ? 3 : (out ? 2 : 1),
+    fillColor: fill,
+    fillOpacity: dim ? 0.12 : (out ? 0.55 : 0.35)
+  };
+}
+
+function onEachDistrict(feature, layer) {
+  const id = feature.properties.districtId;
+  layer.bindTooltip(`منطقه ${id}`, { sticky: true });
+  layer.on('click', () => openDistrict(id));
+}
+
+function focusTehran() {
+  if (focusedDistrict != null && districtLayer) {
+    let bounds = null;
+    districtLayer.eachLayer(l => {
+      if (l.feature && l.feature.properties.districtId === focusedDistrict) {
+        bounds = l.getBounds();
+      }
+    });
+    if (bounds) {
+      map.fitBounds(bounds, { padding: [40, 40], maxZoom: 13 });
+      return;
+    }
+  }
+  if (districtLayer) {
+    map.fitBounds(districtLayer.getBounds(), { padding: [20, 20], maxZoom: 12 });
+  } else {
+    map.setView([35.6892, 51.3890], 11);
+  }
+}
+
+function openDistrict(id) {
+  focusedDistrict = id;
+  clearDistrictBtn.hidden = false;
+  selected = null;
+  actions.innerHTML = '';
+  renderDrill();
+  renderDistricts();
+  upsertMarkers();
+  if (districtLayer) districtLayer.setStyle(districtStyle);
+  focusTehran();
+  pushToast('دریل منطقه ' + id, 'info');
+}
+
+function clearDistrictFocus() {
+  focusedDistrict = null;
+  clearDistrictBtn.hidden = true;
+  drillPanel.hidden = true;
+  renderDistricts();
+  upsertMarkers();
+  if (districtLayer) districtLayer.setStyle(districtStyle);
+  focusTehran();
+}
+
+function renderDrill() {
+  if (focusedDistrict == null) {
+    drillPanel.hidden = true;
+    return;
+  }
+  const d = focusedDistrict;
+  const sum = Number((state.districtSums || [])[d]) || 0;
+  const cap = state.capacity || 1;
+  const out = (state.blackouts || []).includes(d);
+  const list = (state.neighborhoods || [])
+    .filter(n => n.d === d)
+    .slice()
+    .sort((a, b) => b.w - a.w);
+  const online = list.filter(n => n.s === 'O');
+  drillPanel.hidden = false;
+  drillTitle.textContent = 'منطقه ' + d;
+  drillMeta.textContent = out
+    ? 'خاموشی آبشاری'
+    : `${sum.toFixed(1)} / ${cap.toFixed(0)} MW · ${online.length} آنلاین · حاشیه ${(cap - sum).toFixed(0)} MW`;
+  drillList.innerHTML = list.slice(0, 24).map(n => {
+    const st = n.s === 'B' ? 'B' : n.s === 'S' ? 'S' : 'O';
+    return `<div class="row" data-id="${n.id}"><span>${n.name} · ${st}</span><span style="color:var(--chart)">${n.w.toFixed(1)} MW</span></div>`;
+  }).join('') || '<div class="hint">محله‌ای نیست</div>';
+  drillList.querySelectorAll('.row').forEach(el => {
+    el.onclick = () => {
+      const n = (state.neighborhoods || []).find(x => x.id === el.getAttribute('data-id'));
+      if (n) showDetail(n);
+    };
+  });
+}
+
+fetch('/static/geo/tehran-districts-22.geojson')
+  .then(r => r.json())
+  .then(geo => {
+    districtLayer = L.geoJSON(geo, { style: districtStyle, onEachFeature: onEachDistrict }).addTo(map);
+    focusTehran();
+    fixMapSize();
+  });
+
+document.getElementById('focusBtn').addEventListener('click', focusTehran);
+clearDistrictBtn.addEventListener('click', clearDistrictFocus);
+drillClearBtn.addEventListener('click', clearDistrictFocus);
+shedTopBtn.addEventListener('click', async () => {
+  if (focusedDistrict == null) return;
+  const r = await fetch('/api/dsm/shed-top/5/' + focusedDistrict, { method: 'POST' });
+  const j = await r.json();
+  pushToast('قطع دستی ' + (j.shed || 0) + ' پرمصرف در منطقه ' + focusedDistrict, 'info');
+});
+
+function markerColor(n) {
+  if (n.s === 'B') return '#2a2a2a';
+  if (n.s === 'S') return '#c9a227';
+  const t = Math.min(1, n.w / 25);
+  return `rgb(${30 + t * 30},${50 + t * 40},${90 + t * 120})`;
+}
+
+function critIconHtml(site, dark) {
+  const t = site.type || 'hospital';
+  const glyph = CRIT_GLYPH[t] || '!';
+  return `<div class="crit-icon ${t}${dark ? ' dark' : ''}" title="${site.displayName || site.name}">${glyph}</div>`;
+}
+
+function upsertMarkers() {
+  const seen = new Set();
+  for (const n of state.neighborhoods || []) {
+    const inFocus = focusedDistrict == null || n.d === focusedDistrict;
+    if (!inFocus) {
+      const old = markerById.get(n.id);
+      if (old) {
+        markers.removeLayer(old);
+        markerById.delete(n.id);
+      }
+      continue;
+    }
+    seen.add(n.id);
+    let m = markerById.get(n.id);
+    const site = critById.get(n.id);
+    const dark = n.s === 'B' || n.s === 'S';
+    if (site) {
+      const icon = L.divIcon({
+        className: '',
+        html: critIconHtml(site, dark),
+        iconSize: [28, 28],
+        iconAnchor: [14, 14]
+      });
+      if (!m || !m._isCrit) {
+        if (m) markers.removeLayer(m);
+        m = L.marker([n.lat, n.lng], { icon, zIndexOffset: 400 }).addTo(markers);
+        m._isCrit = true;
+        m.on('click', () => showDetail(n));
+        markerById.set(n.id, m);
+      } else {
+        m.setLatLng([n.lat, n.lng]);
+        m.setIcon(icon);
+      }
+    } else {
+      const color = markerColor(n);
+      if (!m || m._isCrit) {
+        if (m) markers.removeLayer(m);
+        m = L.circleMarker([n.lat, n.lng], {
+          radius: 6,
+          color: '#0b1220',
+          weight: 1,
+          fillColor: color,
+          fillOpacity: 0.95
+        }).addTo(markers);
+        m._isCrit = false;
+        m.on('click', () => showDetail(n));
+        markerById.set(n.id, m);
+      } else {
+        m.setLatLng([n.lat, n.lng]);
+        m.setStyle({ fillColor: color, radius: dark ? 5 : 6 });
+      }
+      if (selected && selected.id === n.id) {
+        m.setStyle({ weight: 2, color: '#fff' });
+      }
+    }
+  }
+  for (const [id, m] of [...markerById.entries()]) {
+    if (!seen.has(id)) {
+      markers.removeLayer(m);
+      markerById.delete(id);
+    }
+  }
+  if (districtLayer) districtLayer.setStyle(districtStyle);
+}
+
+function renderDistricts() {
+  const cap = state.capacity || 1;
+  districtsEl.innerHTML = '';
+  for (let d = 1; d <= 22; d++) {
+    const sum = Number((state.districtSums || [])[d]) || 0;
+    const out = (state.blackouts || []).includes(d);
+    const pct = out ? 100 : Math.min(100, (sum / cap) * 100);
+    const div = document.createElement('div');
+    div.className = 'district' + (out ? ' out' : '') + (focusedDistrict === d ? ' focus' : '');
+    div.innerHTML = `<label>منطقه ${d} · ${out ? 'خاموش' : sum.toFixed(1) + ' MW'}</label><div class="bar"><div class="fill" style="width:${pct}%"></div></div>`;
+    div.onclick = () => openDistrict(d);
+    districtsEl.appendChild(div);
+  }
+}
+
+function showDetail(n) {
+  selected = n;
+  const site = critById.get(n.id);
+  const critLine = site
+    ? `<br/><span style="color:#ffd166">سایت حیاتی · ${CRIT_LABEL[site.type] || site.type} · ${site.displayName || site.name}</span>`
+    : '';
+  detail.innerHTML = `<b>${n.name}</b><br/>منطقه ${n.d}<br/>${n.w.toFixed(2)} MW · ${statusText(n.s)}${critLine}<br/>shard ${n.sh}`;
+  actions.innerHTML = '';
+  if (n.s === 'O') {
+    const shed = document.createElement('button');
+    shed.className = 'btn';
+    shed.textContent = 'قطع بار این محله';
+    shed.onclick = async () => {
+      await fetch('/api/neighborhood/' + encodeURIComponent(n.id) + '/shed', { method: 'POST' });
+      pushToast('قطع دستی: ' + n.name + ' (منطقه ' + n.d + ')', 'info');
+    };
+    actions.appendChild(shed);
+  } else {
+    const rest = document.createElement('button');
+    rest.className = 'btn primary';
+    rest.textContent = 'وصل مجدد';
+    rest.onclick = async () => {
+      await fetch('/api/neighborhood/' + encodeURIComponent(n.id) + '/restore', { method: 'POST' });
+      pushToast('وصل مجدد: ' + n.name, 'good');
+    };
+    actions.appendChild(rest);
+  }
+  upsertMarkers();
+}
+
+function formatHour(h, live) {
+  if (live || h < 0) return 'ساعت: زنده';
+  const hh = Math.floor(h);
+  const label = hh < 5 ? 'شب' : hh < 12 ? 'صبح' : hh < 17 ? 'ظهر/گرما' : hh < 21 ? 'عصر' : 'شب';
+  return `ساعت: ${String(hh).padStart(2,'0')}:00 (${label})`;
+}
+
+function announceBlackoutDiff(nextList) {
+  const next = new Set(nextList || []);
+  const newlyDark = [];
+  for (const d of next) {
+    if (!prevBlackouts.has(d)) newlyDark.push(d);
+  }
+  for (const d of newlyDark) {
+    pushToast('منطقه ' + d + ' خاموش شد', 'bad');
+    // strike from already-dark neighbors (cascade source) or any neighbor if first trip
+    const nbrs = neighborsByDistrict[String(d)] || neighborsByDistrict[d] || [];
+    let hit = false;
+    for (const src of nbrs) {
+      if (prevBlackouts.has(src) || newlyDark.includes(src)) {
+        strikeLightning(src, d);
+        hit = true;
+      }
+    }
+    if (!hit && nbrs.length) {
+      // first trip in a wave: flash from heaviest neighbor toward this district
+      strikeLightning(nbrs[0], d);
+    }
+  }
+  for (const d of prevBlackouts) {
+    if (!next.has(d)) pushToast('منطقه ' + d + ' وصل شد', 'good');
+  }
+  prevBlackouts = next;
+}
+
+function announceCriticalDiff(neighborhoods) {
+  for (const n of neighborhoods || []) {
+    const site = critById.get(n.id);
+    if (!site) continue;
+    const prev = prevCritStatus.get(n.id);
+    if (prev === 'O' && n.s === 'B') {
+      pushToast('سایت حیاتی خاموش: ' + (site.displayName || site.name), 'bad');
+    } else if ((prev === 'B' || prev === 'S') && n.s === 'O') {
+      pushToast('اولویت وصل: ' + (site.displayName || site.name), 'good');
+    }
+    prevCritStatus.set(n.id, n.s);
+  }
+}
+
+function announceShedDiff(neighborhoods) {
+  const next = new Set();
+  for (const n of neighborhoods || []) {
+    if (n.s === 'S') next.add(n.id);
+  }
+  for (const id of next) {
+    if (!prevShed.has(id)) {
+      const n = (neighborhoods || []).find(x => x.id === id);
+      pushToast('ناظر قطع کرد: ' + (n ? n.name : id), 'info');
+    }
+  }
+  for (const id of prevShed) {
+    if (!next.has(id)) {
+      const n = (state.neighborhoods || []).find(x => x.id === id);
+      pushToast('ناظر وصل کرد: ' + (n ? n.name : id), 'good');
+    }
+  }
+  prevShed = next;
+}
+
+function updateSimHud(msg) {
+  const cap = msg.capacity || 1;
+  const sums = msg.districtSums || [];
+  let worst = Infinity;
+  for (let d = 1; d <= 22; d++) {
+    if ((msg.blackouts || []).includes(d)) continue;
+    worst = Math.min(worst, cap - (sums[d] || 0));
+  }
+  marginNowEl.textContent = (worst === Infinity ? 0 : worst).toFixed(0) + ' MW';
+  const shed = (msg.neighborhoods || []).filter(n => n.s === 'S').length;
+  shedCountEl.textContent = String(shed);
+  const heavy = (msg.neighborhoods || [])
+    .filter(n => n.s === 'O' && (focusedDistrict == null || n.d === focusedDistrict))
+    .slice()
+    .sort((a, b) => b.w - a.w)
+    .slice(0, 8);
+  heavyListEl.innerHTML = heavy.length
+    ? heavy.map(n => `<div>${n.name} · منطقه ${n.d} · ${n.w.toFixed(1)} MW</div>`).join('')
+    : '—';
+  if (msg.stress && !prevStress) pushToast('سناریو موج گرما روشن — m_scenario فعال', 'info');
+  if (!msg.stress && prevStress) pushToast('موج گرما خاموش', 'good');
+  prevStress = !!msg.stress;
+  if (focusedDistrict != null) renderDrill();
+}
+
+function apply(msg) {
+  announceBlackoutDiff(msg.blackouts);
+  announceCriticalDiff(msg.neighborhoods);
+  announceShedDiff(msg.neighborhoods);
+  updateSimHud(msg);
+  state = msg;
+  document.getElementById('members').textContent = msg.members;
+  document.getElementById('nb').textContent = (msg.neighborhoods || []).length;
+  document.getElementById('bo').textContent = (msg.blackouts || []).length;
+  const total = (msg.districtSums || []).reduce((a, b, i) => i === 0 ? a : a + b, 0);
+  document.getElementById('load').textContent = total.toFixed(0) + ' MW';
+  stressBtn.classList.toggle('on', !!msg.stress);
+  stressBtn.textContent = msg.stress ? 'موج گرما فعال' : 'موج گرما';
+  hourLabel.textContent = formatHour(msg.hour, msg.hourLive);
+  if (!msg.hourLive && msg.hour >= 0 && document.activeElement !== hourSlider) {
+    hourSlider.value = Math.floor(msg.hour);
+  }
+  if (selected) {
+    const live = (msg.neighborhoods || []).find(h => h.id === selected.id);
+    if (live) showDetail(live);
+  }
+  renderDistricts();
+  upsertMarkers();
+}
+
+stressBtn.addEventListener('click', async () => {
+  await fetch('/api/stress', { method: 'POST' });
+});
+
+async function applyScenario(id) {
+  const r = await fetch('/api/scenario/' + encodeURIComponent(id), { method: 'POST' });
+  const j = await r.json();
+  document.querySelectorAll('.scenarios .scen').forEach(b => {
+    b.classList.toggle('active', b.getAttribute('data-scenario') === j.id);
+  });
+  if (!j.hourLive && j.hour >= 0) hourSlider.value = Math.floor(j.hour);
+  pushToast('سناریو: ' + (j.label || id), j.stress ? 'info' : 'good');
+}
+
+document.querySelectorAll('.scenarios .scen').forEach(btn => {
+  btn.addEventListener('click', () => applyScenario(btn.getAttribute('data-scenario')));
+});
+
+hourSlider.addEventListener('input', () => {
+  hourLabel.textContent = formatHour(Number(hourSlider.value), false);
+  document.querySelectorAll('.scenarios .scen').forEach(b => b.classList.remove('active'));
+  clearTimeout(hourDebounce);
+  hourDebounce = setTimeout(async () => {
+    await fetch('/api/hour/' + hourSlider.value, { method: 'POST' });
+  }, 120);
+});
+
+liveBtn.addEventListener('click', async () => {
+  await applyScenario('calm');
+});
+
+function connect() {
+  const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/city');
+  ws.onmessage = (e) => apply(JSON.parse(e.data));
+  ws.onclose = () => setTimeout(connect, 1000);
+}
+connect();
+</script>
+</body>
+</html>

@@ -1,0 +1,57 @@
+services:
+  node1:
+    build: .
+    image: town-power-cluster:local
+    hostname: node1
+    environment:
+      NODE_PORT: "2551"
+      PEKKO_HOSTNAME: node1
+      PEKKO_BIND_HOSTNAME: "0.0.0.0"
+      HTTP_BIND_HOST: "0.0.0.0"
+      PEKKO_SEEDS: "pekko://town-power@node1:2551,pekko://town-power@node2:2551"
+    ports:
+      - "9551:9551"
+      - "2551:2551"
+    networks:
+      - town-net
+    restart: unless-stopped
+
+  node2:
+    image: town-power-cluster:local
+    depends_on:
+      - node1
+    hostname: node2
+    environment:
+      NODE_PORT: "2551"
+      PEKKO_HOSTNAME: node2
+      PEKKO_BIND_HOSTNAME: "0.0.0.0"
+      HTTP_BIND_HOST: "0.0.0.0"
+      PEKKO_SEEDS: "pekko://town-power@node1:2551,pekko://town-power@node2:2551"
+    ports:
+      - "9552:9551"
+      - "2552:2551"
+    networks:
+      - town-net
+    restart: unless-stopped
+
+  node3:
+    image: town-power-cluster:local
+    depends_on:
+      - node1
+    hostname: node3
+    environment:
+      NODE_PORT: "2551"
+      PEKKO_HOSTNAME: node3
+      PEKKO_BIND_HOSTNAME: "0.0.0.0"
+      HTTP_BIND_HOST: "0.0.0.0"
+      PEKKO_SEEDS: "pekko://town-power@node1:2551,pekko://town-power@node2:2551"
+    ports:
+      - "9553:9551"
+      - "2553:2551"
+    networks:
+      - town-net
+    restart: unless-stopped
+
+networks:
+  town-net:
+    driver: bridge
