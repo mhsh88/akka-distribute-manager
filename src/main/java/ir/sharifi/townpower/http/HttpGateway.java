@@ -1,5 +1,16 @@
 package ir.sharifi.townpower.http;
 
+import java.lang.management.BufferPoolMXBean;
+import java.lang.management.ClassLoadingMXBean;
+import java.lang.management.CompilationMXBean;
+import java.lang.management.GarbageCollectorMXBean;
+import java.lang.management.ManagementFactory;
+import java.lang.management.MemoryMXBean;
+import java.lang.management.MemoryPoolMXBean;
+import java.lang.management.MemoryUsage;
+import java.lang.management.RuntimeMXBean;
+import java.lang.management.ThreadInfo;
+import java.lang.management.ThreadMXBean;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -268,6 +279,7 @@ public final class HttpGateway extends AllDirectives {
 				path("city", () -> get(() -> getFromResource("ui/city.html"))),
 				path("viewer", () -> get(() -> getFromResource("ui/viewer.html"))),
 				path("dashboard", () -> get(() -> getFromResource("ui/dashboard.html"))),
+				path("jvm", () -> get(() -> getFromResource("ui/jvm.html"))),
 				path("lab", () -> get(() -> getFromResource("ui/lab.html"))),
 				pathPrefix("static", () -> get(() -> getFromResourceDirectory("ui"))),
 				pathPrefix("api", this::apiRoutes),
@@ -281,6 +293,10 @@ public final class HttpGateway extends AllDirectives {
 	private Route apiRoutes() {
 		return concat(
 				path("cluster", () -> get(() -> complete(jsonResponse(clusterJson())))),
+				pathPrefix("jvm", () -> concat(
+						pathEndOrSingleSlash(() -> get(() -> complete(jsonResponse(jvmJson())))),
+						pathPrefix("thread", () -> path(org.apache.pekko.http.javadsl.server.PathMatchers.segment(), idSeg ->
+								get(() -> complete(jsonResponse(threadStackJson(idSeg)))))))),
 				pathPrefix("lab", () -> concat(
 						path("dead-demo", () -> post(() -> {
 							uiHub.tell(UiHub.FireDeadDemo.INSTANCE);
@@ -516,6 +532,189 @@ public final class HttpGateway extends AllDirectives {
 		} catch (Exception e) {
 			return "{\"members\":[],\"up\":0}";
 		}
+	}
+
+	/** Live MXBean snapshot for this node (jcmd-style readouts; no dump/JFR side effects). */
+	private String jvmJson() {
+		try {
+			ObjectNode root = mapper.createObjectNode();
+			root.put("self", system.address().toString());
+			root.put("ts", System.currentTimeMillis());
+
+			RuntimeMXBean rt = ManagementFactory.getRuntimeMXBean();
+			root.put("pid", rt.getPid());
+			root.put("uptimeMs", rt.getUptime());
+			root.put("vmName", rt.getVmName());
+			root.put("vmVersion", rt.getVmVersion());
+			root.put("javaVersion", System.getProperty("java.version", ""));
+			ArrayNode args = root.putArray("inputArguments");
+			for (String a : rt.getInputArguments()) {
+				args.add(a);
+			}
+			ObjectNode props = root.putObject("props");
+			for (String key : List.of(
+					"java.version", "java.home", "java.vm.name", "os.name", "os.arch", "os.version",
+					"user.dir", "file.encoding", "user.timezone")) {
+				String v = System.getProperty(key);
+				if (v != null) {
+					props.put(key, v);
+				}
+			}
+
+			MemoryMXBean mem = ManagementFactory.getMemoryMXBean();
+			putMem(root.putObject("heap"), mem.getHeapMemoryUsage());
+			putMem(root.putObject("nonHeap"), mem.getNonHeapMemoryUsage());
+			root.put("objectsPendingFinalization", mem.getObjectPendingFinalizationCount());
+
+			ArrayNode pools = root.putArray("pools");
+			for (MemoryPoolMXBean pool : ManagementFactory.getMemoryPoolMXBeans()) {
+				ObjectNode p = pools.addObject();
+				p.put("name", pool.getName());
+				p.put("type", pool.getType().toString());
+				p.put("valid", pool.isValid());
+				MemoryUsage usage = pool.getUsage();
+				if (usage != null) {
+					putMem(p.putObject("usage"), usage);
+				}
+				MemoryUsage peak = pool.getPeakUsage();
+				if (peak != null) {
+					putMem(p.putObject("peak"), peak);
+				}
+				MemoryUsage coll = pool.getCollectionUsage();
+				if (coll != null) {
+					putMem(p.putObject("collection"), coll);
+				}
+				ArrayNode managers = p.putArray("managers");
+				for (String m : pool.getMemoryManagerNames()) {
+					managers.add(m);
+				}
+			}
+
+			ArrayNode buffers = root.putArray("buffers");
+			for (BufferPoolMXBean bp : ManagementFactory.getPlatformMXBeans(BufferPoolMXBean.class)) {
+				ObjectNode b = buffers.addObject();
+				b.put("name", bp.getName());
+				b.put("count", bp.getCount());
+				b.put("used", bp.getMemoryUsed());
+				b.put("capacity", bp.getTotalCapacity());
+			}
+
+			ThreadMXBean threads = ManagementFactory.getThreadMXBean();
+			if (threads.isThreadCpuTimeSupported() && !threads.isThreadCpuTimeEnabled()) {
+				threads.setThreadCpuTimeEnabled(true);
+			}
+			ObjectNode th = root.putObject("threads");
+			th.put("live", threads.getThreadCount());
+			th.put("daemon", threads.getDaemonThreadCount());
+			th.put("peak", threads.getPeakThreadCount());
+			th.put("totalStarted", threads.getTotalStartedThreadCount());
+			ArrayNode list = th.putArray("list");
+			long[] ids = threads.getAllThreadIds();
+			ThreadInfo[] infos = threads.getThreadInfo(ids, 0);
+			for (int i = 0; i < infos.length; i++) {
+				ThreadInfo info = infos[i];
+				if (info == null) {
+					continue;
+				}
+				ObjectNode row = list.addObject();
+				long id = info.getThreadId();
+				row.put("id", id);
+				row.put("name", info.getThreadName());
+				row.put("state", info.getThreadState().toString());
+				row.put("daemon", info.isDaemon());
+				row.put("priority", info.getPriority());
+				row.put("blockedCount", info.getBlockedCount());
+				row.put("waitedCount", info.getWaitedCount());
+				row.put("lockName", info.getLockName() == null ? "" : info.getLockName());
+				row.put("lockOwnerId", info.getLockOwnerId());
+				row.put("cpuTimeNs", threads.isThreadCpuTimeSupported() ? threads.getThreadCpuTime(id) : -1L);
+				row.put("userTimeNs", threads.isThreadCpuTimeSupported() ? threads.getThreadUserTime(id) : -1L);
+			}
+
+			ArrayNode gcs = root.putArray("gc");
+			for (GarbageCollectorMXBean gc : ManagementFactory.getGarbageCollectorMXBeans()) {
+				ObjectNode g = gcs.addObject();
+				g.put("name", gc.getName());
+				g.put("count", gc.getCollectionCount());
+				g.put("timeMs", gc.getCollectionTime());
+				ArrayNode gp = g.putArray("pools");
+				for (String pn : gc.getMemoryPoolNames()) {
+					gp.add(pn);
+				}
+			}
+
+			ClassLoadingMXBean cl = ManagementFactory.getClassLoadingMXBean();
+			ObjectNode cls = root.putObject("classLoading");
+			cls.put("loaded", cl.getLoadedClassCount());
+			cls.put("totalLoaded", cl.getTotalLoadedClassCount());
+			cls.put("unloaded", cl.getUnloadedClassCount());
+
+			CompilationMXBean comp = ManagementFactory.getCompilationMXBean();
+			if (comp != null) {
+				ObjectNode c = root.putObject("compilation");
+				c.put("name", comp.getName());
+				c.put("totalTimeMs", comp.isCompilationTimeMonitoringSupported() ? comp.getTotalCompilationTime() : -1L);
+			}
+
+			var os = ManagementFactory.getOperatingSystemMXBean();
+			ObjectNode osn = root.putObject("os");
+			osn.put("name", os.getName());
+			osn.put("arch", os.getArch());
+			osn.put("version", os.getVersion());
+			osn.put("availableProcessors", os.getAvailableProcessors());
+			osn.put("systemLoadAverage", os.getSystemLoadAverage());
+			if (os instanceof com.sun.management.OperatingSystemMXBean sunOs) {
+				osn.put("processCpuLoad", sunOs.getProcessCpuLoad());
+				osn.put("cpuLoad", sunOs.getCpuLoad());
+				osn.put("totalMemorySize", sunOs.getTotalMemorySize());
+				osn.put("freeMemorySize", sunOs.getFreeMemorySize());
+				osn.put("committedVirtualMemorySize", sunOs.getCommittedVirtualMemorySize());
+			}
+			return mapper.writeValueAsString(root);
+		} catch (Exception e) {
+			system.log().warn("jvmJson failed: {}", e.toString());
+			return "{\"error\":true}";
+		}
+	}
+
+	private String threadStackJson(String idSeg) {
+		try {
+			long id = Long.parseLong(idSeg);
+			ThreadMXBean threads = ManagementFactory.getThreadMXBean();
+			ThreadInfo info = threads.getThreadInfo(id, 256);
+			ObjectNode root = mapper.createObjectNode();
+			root.put("id", id);
+			root.put("ts", System.currentTimeMillis());
+			if (info == null) {
+				root.put("missing", true);
+				return mapper.writeValueAsString(root);
+			}
+			root.put("name", info.getThreadName());
+			root.put("state", info.getThreadState().toString());
+			root.put("daemon", info.isDaemon());
+			root.put("priority", info.getPriority());
+			root.put("lockName", info.getLockName() == null ? "" : info.getLockName());
+			root.put("lockOwnerId", info.getLockOwnerId());
+			root.put("lockOwnerName", info.getLockOwnerName() == null ? "" : info.getLockOwnerName());
+			root.put("blockedCount", info.getBlockedCount());
+			root.put("blockedTimeMs", info.getBlockedTime());
+			root.put("waitedCount", info.getWaitedCount());
+			root.put("waitedTimeMs", info.getWaitedTime());
+			ArrayNode stack = root.putArray("stack");
+			for (StackTraceElement el : info.getStackTrace()) {
+				stack.add(el.toString());
+			}
+			return mapper.writeValueAsString(root);
+		} catch (Exception e) {
+			return "{\"error\":true}";
+		}
+	}
+
+	private static void putMem(ObjectNode n, MemoryUsage u) {
+		n.put("init", u.getInit());
+		n.put("used", u.getUsed());
+		n.put("committed", u.getCommitted());
+		n.put("max", u.getMax());
 	}
 
 	private static HttpResponse jsonResponse(String body) {
