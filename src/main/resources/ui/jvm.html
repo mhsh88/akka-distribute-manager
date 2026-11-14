@@ -79,8 +79,41 @@
     .kv div { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--rule); padding: 6px 0; }
     .kv span { color: var(--muted); }
     .scroll { overflow: auto; max-height: 560px; border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--surface); }
+    .cmd {
+      margin-top: 8px;
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.45;
+      direction: ltr;
+      text-align: left;
+      word-break: break-all;
+    }
+    .cmd b { color: var(--chart); font-weight: 500; }
+    .cmd-row {
+      display: grid;
+      grid-template-columns: 160px 1fr auto;
+      gap: 10px;
+      align-items: start;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--rule);
+      font-size: var(--fs-small);
+    }
+    .cmd-row:last-child { border-bottom: none; }
+    .cmd-row .what { color: var(--text); }
+    .cmd-row .how {
+      font-family: var(--mono); color: var(--muted); direction: ltr; text-align: left;
+      white-space: pre-wrap; word-break: break-all;
+    }
+    .cmd-row .copy {
+      height: 28px; padding: 0 10px; border-radius: var(--radius-control);
+      border: 1px solid var(--control); background: transparent; color: var(--muted);
+      cursor: pointer; font-size: 11px; font-family: var(--mono);
+    }
+    .cmd-row .copy:hover { color: var(--text); background: var(--raised); }
     @media (max-width: 900px) {
       .kpis4, .pool-grid, .split { grid-template-columns: 1fr; }
+      .cmd-row { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -114,6 +147,7 @@
         <button type="button" class="tab" data-tab="threads">Threads</button>
         <button type="button" class="tab" data-tab="gc">GC / Runtime</button>
         <button type="button" class="tab" data-tab="actions">Actions</button>
+        <button type="button" class="tab" data-tab="cmds">Commands</button>
       </div>
       <div class="grow"></div>
       <input class="ctl" id="q" type="search" placeholder="filter threads / props…" dir="ltr"/>
@@ -132,42 +166,53 @@
             <div class="kpi"><span class="label">Heap</span><span class="value" id="o-heap">—</span></div>
             <div class="bar"><i id="o-heap-bar"></i></div>
             <div class="small muted mono" id="o-heap-txt" style="margin-top:8px">—</div>
+            <div class="cmd">jcmd <b class="pid">PID</b> GC.heap_info</div>
           </div>
           <div class="card">
             <div class="kpi"><span class="label">Non-heap</span><span class="value" id="o-non">—</span></div>
             <div class="bar"><i id="o-non-bar"></i></div>
             <div class="small muted mono" id="o-non-txt" style="margin-top:8px">—</div>
+            <div class="cmd">jstat -gcmetacapacity <b class="pid">PID</b></div>
           </div>
           <div class="card">
             <div class="kpi"><span class="label">Threads</span><span class="value" id="o-thr">—</span></div>
             <div class="small muted mono" id="o-thr-txt" style="margin-top:12px">—</div>
+            <div class="cmd">jcmd <b class="pid">PID</b> Thread.print</div>
           </div>
           <div class="card">
             <div class="kpi"><span class="label">CPU</span><span class="value" id="o-cpu">—</span></div>
             <div class="small muted mono" id="o-cpu-txt" style="margin-top:12px">—</div>
+            <div class="cmd">top -H -p <b class="pid">PID</b> · OS MXBean</div>
           </div>
         </div>
         <div class="kpis4">
           <div class="card">
             <div class="kpi"><span class="label">Classes</span><span class="value" id="o-cls">—</span></div>
             <div class="small muted mono" id="o-cls-txt" style="margin-top:12px">—</div>
+            <div class="cmd">jstat -class <b class="pid">PID</b></div>
           </div>
           <div class="card">
             <div class="kpi"><span class="label">Host RAM free</span><span class="value" id="o-ram">—</span></div>
             <div class="small muted mono" id="o-ram-txt" style="margin-top:12px">—</div>
+            <div class="cmd">free -h · OS MXBean</div>
           </div>
           <div class="card">
             <div class="kpi"><span class="label">Compile</span><span class="value" id="o-comp">—</span></div>
             <div class="small muted mono" id="o-comp-txt" style="margin-top:12px">—</div>
+            <div class="cmd">jstat -compiler <b class="pid">PID</b></div>
           </div>
           <div class="card">
             <div class="kpi"><span class="label">GC total</span><span class="value" id="o-gc">—</span></div>
             <div class="small muted mono" id="o-gc-txt" style="margin-top:12px">—</div>
+            <div class="cmd">jstat -gcutil <b class="pid">PID</b></div>
           </div>
         </div>
       </section>
 
       <section class="pane" id="tab-memory">
+        <div class="card" style="padding:10px 16px">
+          <div class="cmd" style="margin:0">pools ← <b>jcmd <span class="pid">PID</span> GC.heap_info</b> · buffers ← <b>jcmd <span class="pid">PID</span> VM.native_memory summary</b></div>
+        </div>
         <div class="pool-grid" id="pools"></div>
         <div class="card" id="pool-detail">
           <div class="panel-h" style="border:0;padding:0 0 10px">
@@ -188,6 +233,9 @@
       </section>
 
       <section class="pane" id="tab-threads">
+        <div class="card" style="padding:10px 16px">
+          <div class="cmd" style="margin:0">list/stack ← <b>jcmd <span class="pid">PID</span> Thread.print</b> · <b>jstack <span class="pid">PID</span></b></div>
+        </div>
         <div class="chiprow" id="state-chips"></div>
         <div class="split">
           <div class="scroll">
@@ -218,7 +266,10 @@
 
       <section class="pane" id="tab-gc">
         <div class="card">
-          <div class="panel-h" style="border:0;padding:0 0 10px"><h2 style="margin:0;font-size:var(--fs-section);font-weight:500">Garbage collectors</h2></div>
+          <div class="panel-h" style="border:0;padding:0 0 10px">
+            <h2 style="margin:0;font-size:var(--fs-section);font-weight:500">Garbage collectors</h2>
+            <div class="cmd">jstat -gcutil <b class="pid">PID</b> · jcmd <b class="pid">PID</b> GC.heap_info</div>
+          </div>
           <table class="grid"><thead><tr><th>name</th><th>count</th><th>time</th><th>pools</th></tr></thead>
             <tbody id="gc-body"></tbody></table>
         </div>
@@ -226,6 +277,7 @@
           <div class="panel-h" style="border:0;padding:0 0 10px">
             <h2 style="margin:0;font-size:var(--fs-section);font-weight:500">System properties <span class="muted small mono" id="props-count"></span></h2>
             <p class="muted small">full dump · may include secrets · filter via search box</p>
+            <div class="cmd">jcmd <b class="pid">PID</b> VM.system_properties · jinfo -sysprops <b class="pid">PID</b></div>
           </div>
           <div class="scroll" style="max-height:360px;border:0">
             <table class="grid"><thead><tr><th>key</th><th>value</th></tr></thead>
@@ -233,7 +285,10 @@
           </div>
         </div>
         <div class="card">
-          <div class="panel-h" style="border:0;padding:0 0 10px"><h2 style="margin:0;font-size:var(--fs-section);font-weight:500">VM inputArguments</h2></div>
+          <div class="panel-h" style="border:0;padding:0 0 10px">
+            <h2 style="margin:0;font-size:var(--fs-section);font-weight:500">VM inputArguments</h2>
+            <div class="cmd">jcmd <b class="pid">PID</b> VM.command_line · jinfo -flags <b class="pid">PID</b></div>
+          </div>
           <pre class="stack" id="args" style="max-height:280px">—</pre>
         </div>
       </section>
@@ -246,12 +301,14 @@
               <p class="muted small">HotSpot live objects → .hprof under dumpsDir</p>
             </div>
             <button type="button" class="btn primary" id="btn-heap">Dump heap</button>
+            <div class="cmd">jcmd <b class="pid">PID</b> GC.heap_dump …hprof</div>
             <div class="small muted mono" id="heap-msg" style="margin-top:10px">—</div>
           </div>
           <div class="card" style="grid-column: span 3;">
             <div class="panel-h" style="border:0;padding:0 0 10px">
               <h2 style="margin:0;font-size:var(--fs-section);font-weight:500">JFR</h2>
               <p class="muted small" id="jfr-status">Flight Recorder</p>
+              <div class="cmd">jcmd <b class="pid">PID</b> JFR.start|dump|stop</div>
             </div>
             <div style="display:flex;flex-wrap:wrap;gap:8px">
               <button type="button" class="btn primary" id="btn-jfr-start">Start</button>
@@ -265,6 +322,7 @@
           <div class="panel-h" style="border:0;padding:0 0 10px">
             <h2 style="margin:0;font-size:var(--fs-section);font-weight:500">Artifacts</h2>
             <p class="muted small mono" id="dumps-dir">.local-run/jvm-dumps</p>
+            <div class="cmd">ls .local-run/jvm-dumps · jcmd <b class="pid">PID</b> GC.heap_dump / JFR.*</div>
           </div>
           <div class="scroll" style="max-height:320px;border:0">
             <table class="grid">
@@ -272,6 +330,16 @@
               <tbody id="artifacts"></tbody>
             </table>
           </div>
+        </div>
+      </section>
+
+      <section class="pane" id="tab-cmds">
+        <div class="card">
+          <div class="panel-h" style="border:0;padding:0 0 10px">
+            <h2 style="margin:0;font-size:var(--fs-section);font-weight:500">Panel → shell</h2>
+            <p class="muted small">PID live from this node · copy = paste-ready</p>
+          </div>
+          <div id="cmd-list"></div>
         </div>
       </section>
     </div>
@@ -294,6 +362,29 @@
   };
 
   const $ = (id) => document.getElementById(id);
+  const CMD_ROWS = [
+    ["Find PID", "jps -l"],
+    ["Help", "jcmd PID help"],
+    ["pid / uptime / VM", "jcmd PID VM.info"],
+    ["Heap", "jcmd PID GC.heap_info"],
+    ["Non-heap / Metaspace", "jstat -gcmetacapacity PID"],
+    ["Memory pools", "jcmd PID GC.heap_info"],
+    ["Buffer / native", "jcmd PID VM.native_memory summary"],
+    ["Threads list + stacks", "jcmd PID Thread.print"],
+    ["One thread stack", "jstack PID"],
+    ["Thread CPU (OS)", "top -H -p PID"],
+    ["GC count / time", "jstat -gcutil PID"],
+    ["Classes", "jstat -class PID"],
+    ["Compile", "jstat -compiler PID"],
+    ["System properties", "jcmd PID VM.system_properties"],
+    ["VM flags / args", "jcmd PID VM.command_line"],
+    ["Host RAM", "free -h"],
+    ["Heap dump", "jcmd PID GC.heap_dump .local-run/jvm-dumps/manual.hprof"],
+    ["JFR start", "jcmd PID JFR.start name=demo settings=default"],
+    ["JFR dump", "jcmd PID JFR.dump name=demo filename=.local-run/jvm-dumps/manual.jfr"],
+    ["JFR stop", "jcmd PID JFR.stop name=demo"],
+    ["List dumps", "ls -lah .local-run/jvm-dumps"]
+  ];
   const fmtBytes = (n) => {
     if (n == null || n < 0) return "n/a";
     const u = ["B", "KB", "MB", "GB", "TB"];
@@ -428,7 +519,9 @@
     $("k-pid").textContent = j.pid;
     $("k-up").textContent = fmtMs(j.uptimeMs);
     $("k-tick").textContent = new Date(j.ts).toLocaleTimeString("fa-IR");
-    $("hdr-sub").textContent = j.self + " · " + j.vmName;
+    $("hdr-sub").textContent = j.self + " · " + j.vmName + " · pid " + j.pid;
+    document.querySelectorAll("b.pid, span.pid").forEach((el) => { el.textContent = j.pid; });
+    renderCommands(j.pid);
 
     setBar($("o-heap-bar"), $("o-heap"), $("o-heap-txt"), j.heap);
     setBar($("o-non-bar"), $("o-non"), $("o-non-txt"), j.nonHeap);
@@ -609,6 +702,29 @@
       $("stack-h").textContent = "stack fetch failed";
       $("stack").textContent = String(e);
     }
+  }
+
+  function renderCommands(pid) {
+    const p = pid == null ? "PID" : String(pid);
+    $("cmd-list").innerHTML = CMD_ROWS.map(([what, how]) => {
+      const cmd = how.replaceAll("PID", p);
+      return "<div class='cmd-row'>" +
+        "<div class='what'>" + escapeHtml(what) + "</div>" +
+        "<div class='how'>" + escapeHtml(cmd) + "</div>" +
+        "<button type='button' class='copy' data-cmd='" + escapeAttr(cmd) + "'>copy</button>" +
+        "</div>";
+    }).join("");
+    $("cmd-list").querySelectorAll(".copy").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(btn.dataset.cmd);
+          btn.textContent = "ok";
+          setTimeout(() => { btn.textContent = "copy"; }, 800);
+        } catch (e) {
+          btn.textContent = "fail";
+        }
+      });
+    });
   }
 
   function renderGcRuntime() {
