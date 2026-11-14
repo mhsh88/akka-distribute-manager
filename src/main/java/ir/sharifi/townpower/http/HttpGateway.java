@@ -1,6 +1,10 @@
 package ir.sharifi.townpower.http;
 
 import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.time.Duration;
 import java.lang.management.BufferPoolMXBean;
 import java.lang.management.ClassLoadingMXBean;
 import java.lang.management.CompilationMXBean;
@@ -57,10 +61,12 @@ import org.apache.pekko.stream.javadsl.Sink;
 import org.apache.pekko.stream.javadsl.Source;
 import org.apache.pekko.stream.javadsl.SourceQueueWithComplete;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import ir.sharifi.townpower.ActorMetrics;
 import ir.sharifi.townpower.ActorTrace;
 import ir.sharifi.townpower.CriticalSites;
 import ir.sharifi.townpower.house.HouseProtocol.HouseEvent;
@@ -92,6 +98,11 @@ public final class HttpGateway extends AllDirectives {
 	private final Object jfrLock = new Object();
 	private volatile Recording jfrRecording;
 	private volatile String jfrLastPath = "";
+	private final int httpBasePort;
+	private final String bindHost;
+	private final HttpClient peerHttp = HttpClient.newBuilder()
+			.connectTimeout(Duration.ofMillis(800))
+			.build();
 
 	static HttpGateway start(ActorSystem<?> system, ActorRef<UiHub.Command> uiHub) {
 		return new HttpGateway(system, uiHub);
@@ -100,17 +111,18 @@ public final class HttpGateway extends AllDirectives {
 	private HttpGateway(ActorSystem<?> system, ActorRef<UiHub.Command> uiHub) {
 		this.system = system;
 		this.uiHub = uiHub;
+		this.httpBasePort = system.settings().config().getInt("town.http-base-port");
 		int remotingPort = Cluster.get(system).selfMember().address().getPort().orElse(2551);
-		int httpPort = system.settings().config().getInt("town.http-base-port") + (remotingPort - 2551);
-		String host = System.getenv().getOrDefault("HTTP_BIND_HOST", "127.0.0.1");
-		CompletionStage<ServerBinding> binding = Http.get(system).newServerAt(host, httpPort).bind(routes());
+		int httpPort = httpBasePort + (remotingPort - 2551);
+		this.bindHost = System.getenv().getOrDefault("HTTP_BIND_HOST", "127.0.0.1");
+		CompletionStage<ServerBinding> binding = Http.get(system).newServerAt(bindHost, httpPort).bind(routes());
 		binding.whenComplete((b, err) -> {
 			if (err != null) {
-				system.log().error("HTTP bind failed on " + host + ":" + httpPort, err);
+				system.log().error("HTTP bind failed on " + bindHost + ":" + httpPort, err);
 			} else {
 				system.log().info(
 						"HTTP ready city=http://{}:{}/city lab=http://{}:{}/lab",
-						host, Integer.valueOf(httpPort), host, Integer.valueOf(httpPort));
+						bindHost, Integer.valueOf(httpPort), bindHost, Integer.valueOf(httpPort));
 			}
 		});
 	}
@@ -296,6 +308,7 @@ public final class HttpGateway extends AllDirectives {
 				path("viewer", () -> get(() -> getFromResource("ui/viewer.html"))),
 				path("dashboard", () -> get(() -> getFromResource("ui/dashboard.html"))),
 				path("jvm", () -> get(() -> getFromResource("ui/jvm.html"))),
+				path("actors", () -> get(() -> getFromResource("ui/actors.html"))),
 				path("lab", () -> get(() -> getFromResource("ui/lab.html"))),
 				pathPrefix("static", () -> get(() -> getFromResourceDirectory("ui"))),
 				pathPrefix("api", this::apiRoutes),
@@ -309,6 +322,9 @@ public final class HttpGateway extends AllDirectives {
 	private Route apiRoutes() {
 		return concat(
 				path("cluster", () -> get(() -> complete(jsonResponse(clusterJson())))),
+				pathPrefix("actors", () -> concat(
+						pathEndOrSingleSlash(() -> get(() -> complete(jsonResponse(actorsClusterJson())))),
+						path("local", () -> get(() -> complete(jsonResponse(actorsLocalJson())))))),
 				pathPrefix("jvm", () -> concat(
 						pathEndOrSingleSlash(() -> get(() -> complete(jsonResponse(jvmJson())))),
 						pathPrefix("thread", () -> path(org.apache.pekko.http.javadsl.server.PathMatchers.segment(), idSeg ->
@@ -555,6 +571,119 @@ public final class HttpGateway extends AllDirectives {
 		} catch (Exception e) {
 			return "{\"members\":[],\"up\":0}";
 		}
+	}
+
+	private String actorsLocalJson() {
+		try {
+			ObjectNode root = mapper.createObjectNode();
+			root.put("self", system.address().toString());
+			root.put("ts", System.currentTimeMillis());
+			root.put("scope", "local");
+			root.put("liveActors", ActorMetrics.size());
+			ArrayNode actors = root.putArray("actors");
+			for (ActorMetrics.Snap s : ActorMetrics.snapshot()) {
+				putActorSnap(actors.addObject(), s);
+			}
+			return mapper.writeValueAsString(root);
+		} catch (Exception e) {
+			return "{\"actors\":[],\"error\":true}";
+		}
+	}
+
+	/**
+	 * Merge local + peer /api/actors/local from every Up member.
+	 * shortcut: HTTP fan-out (not Pekko ask); fine for local demo.
+	 */
+	private String actorsClusterJson() {
+		try {
+			ObjectNode root = mapper.createObjectNode();
+			root.put("self", system.address().toString());
+			root.put("ts", System.currentTimeMillis());
+			root.put("scope", "cluster");
+			root.put("proxyNote", "msgCount/handleNs/approxStateBytes — not OS RAM/CPU");
+
+			ArrayNode nodes = root.putArray("nodes");
+			ArrayNode actors = root.putArray("actors");
+			ObjectNode selfNode = nodes.addObject();
+			selfNode.put("address", system.address().toString());
+			selfNode.put("ok", true);
+			selfNode.put("liveActors", ActorMetrics.size());
+			selfNode.put("source", "local");
+			for (ActorMetrics.Snap s : ActorMetrics.snapshot()) {
+				putActorSnap(actors.addObject(), s);
+			}
+
+			String selfAddr = system.address().toString();
+			for (var m : Cluster.get(system).state().getMembers()) {
+				if (!"Up".equals(m.status().toString())) {
+					continue;
+				}
+				String addr = m.address().toString();
+				if (addr.equals(selfAddr)) {
+					continue;
+				}
+				ObjectNode peer = nodes.addObject();
+				peer.put("address", addr);
+				Integer remoting = m.address().getPort().orElse(null);
+				String host = m.address().getHost().orElse(bindHost);
+				if (remoting == null) {
+					peer.put("ok", false);
+					peer.put("error", "no remoting port");
+					continue;
+				}
+				int httpPort = httpBasePort + (remoting - 2551);
+				String url = "http://" + host + ":" + httpPort + "/api/actors/local";
+				peer.put("url", url);
+				try {
+					HttpRequest req = HttpRequest.newBuilder(URI.create(url))
+							.timeout(Duration.ofMillis(1200))
+							.GET()
+							.build();
+					java.net.http.HttpResponse<String> res =
+							peerHttp.send(req, java.net.http.HttpResponse.BodyHandlers.ofString());
+					if (res.statusCode() != 200) {
+						peer.put("ok", false);
+						peer.put("error", "HTTP " + res.statusCode());
+						continue;
+					}
+					JsonNode body = mapper.readTree(res.body());
+					peer.put("ok", true);
+					peer.put("liveActors", body.path("liveActors").asInt(0));
+					peer.put("source", "peer");
+					JsonNode list = body.path("actors");
+					if (list.isArray()) {
+						for (JsonNode a : list) {
+							actors.add(a.deepCopy());
+						}
+					}
+				} catch (Exception e) {
+					peer.put("ok", false);
+					peer.put("error", e.toString());
+				}
+			}
+
+			root.put("actorCount", actors.size());
+			root.put("nodeCount", nodes.size());
+			return mapper.writeValueAsString(root);
+		} catch (Exception e) {
+			system.log().warn("actorsClusterJson failed: {}", e.toString());
+			return "{\"actors\":[],\"error\":true}";
+		}
+	}
+
+	private static void putActorSnap(ObjectNode n, ActorMetrics.Snap s) {
+		n.put("id", s.id());
+		n.put("name", s.name());
+		n.put("districtId", s.districtId());
+		n.put("memberId", s.memberId());
+		n.put("shardId", s.shardId());
+		n.put("status", s.status());
+		n.put("watts", s.watts());
+		n.put("msgCount", s.msgCount());
+		n.put("totalHandleNs", s.totalHandleNs());
+		n.put("avgHandleNs", s.msgCount() == 0 ? 0 : s.totalHandleNs() / s.msgCount());
+		n.put("lastMsgAt", s.lastMsgAt());
+		n.put("approxStateBytes", s.approxStateBytes());
 	}
 
 	/** Live MXBean snapshot for this node (jcmd-style readouts; no dump/JFR side effects). */

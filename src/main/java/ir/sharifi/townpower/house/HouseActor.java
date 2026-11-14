@@ -10,6 +10,7 @@ import org.apache.pekko.cluster.sharding.typed.javadsl.EntityTypeKey;
 
 import java.util.concurrent.ThreadLocalRandom;
 
+import ir.sharifi.townpower.ActorMetrics;
 import ir.sharifi.townpower.ActorTrace;
 import ir.sharifi.townpower.NeighborhoodCatalog;
 import ir.sharifi.townpower.NeighborhoodCatalog.Neighborhood;
@@ -74,7 +75,9 @@ public final class HouseActor extends AbstractBehavior<Command> {
 		this.memberId = ctx.getSystem().address().toString();
 		this.uiHub = uiHub;
 		this.grid = grid;
+		long t0 = System.nanoTime();
 		publish("wake");
+		touch(t0);
 	}
 
 	@Override
@@ -89,6 +92,7 @@ public final class HouseActor extends AbstractBehavior<Command> {
 	}
 
 	private Behavior<Command> onConsume(ConsumeWatts msg) {
+		long t0 = System.nanoTime();
 		if (status == Status.BLACKOUT || status == Status.SHED) {
 			watts = 0;
 		} else {
@@ -107,33 +111,55 @@ public final class HouseActor extends AbstractBehavior<Command> {
 					memberId)));
 		}
 		publish("ping");
+		touch(t0);
 		return this;
 	}
 
 	private Behavior<Command> onBlackout(Blackout msg) {
+		long t0 = System.nanoTime();
 		String reason = msg.reason() == null ? "" : msg.reason();
 		boolean shed = reason.startsWith("manual") || reason.startsWith("supervisor");
 		status = shed ? Status.SHED : Status.BLACKOUT;
 		watts = 0;
 		publish(shed ? "shed" : "blackout");
+		touch(t0);
 		return this;
 	}
 
 	private Behavior<Command> onRestore(Restore msg) {
+		long t0 = System.nanoTime();
 		status = Status.ONLINE;
 		publish("restore");
+		touch(t0);
 		return this;
 	}
 
 	private Behavior<Command> onGetStatus(GetStatus msg) {
+		long t0 = System.nanoTime();
 		msg.replyTo().tell(new HouseProtocol.StatusView(
 				neighborhoodId, name, districtId, watts, status, memberId, shardId));
+		touch(t0);
 		return this;
 	}
 
 	private Behavior<Command> onPassivate() {
+		long t0 = System.nanoTime();
 		publish("sleep");
+		touch(t0);
+		ActorMetrics.remove(neighborhoodId);
 		return Behaviors.stopped();
+	}
+
+	private void touch(long startedNs) {
+		ActorMetrics.record(
+				neighborhoodId,
+				name,
+				districtId,
+				memberId,
+				shardId,
+				status,
+				watts,
+				System.nanoTime() - startedNs);
 	}
 
 	private void publish(String action) {
