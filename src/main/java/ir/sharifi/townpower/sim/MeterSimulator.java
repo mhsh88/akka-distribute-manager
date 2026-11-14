@@ -23,7 +23,10 @@ import org.apache.pekko.stream.javadsl.Keep;
 import org.apache.pekko.stream.javadsl.Sink;
 import org.apache.pekko.stream.javadsl.Source;
 
+import ir.sharifi.townpower.ActorMetrics;
+import ir.sharifi.townpower.ActorProfile;
 import ir.sharifi.townpower.ActorTrace;
+import ir.sharifi.townpower.DescribedActor;
 import ir.sharifi.townpower.NeighborhoodCatalog;
 import ir.sharifi.townpower.NeighborhoodCatalog.Neighborhood;
 import ir.sharifi.townpower.crdt.LoadShare;
@@ -34,9 +37,14 @@ import ir.sharifi.townpower.http.UiHub;
 /**
  * Pekko Stream meter: tick → buffer → tell houses; stress → dropHead + backpressure crumbs.
  */
-public final class MeterSimulator extends AbstractBehavior<MeterSimulator.Command> {
+public final class MeterSimulator extends AbstractBehavior<MeterSimulator.Command> implements DescribedActor {
 
 	public interface Command {
+	}
+
+	@Override
+	public ActorProfile profile() {
+		return ActorProfile.METER;
 	}
 
 	public record SetStress(boolean enabled) implements Command {
@@ -84,6 +92,7 @@ public final class MeterSimulator extends AbstractBehavior<MeterSimulator.Comman
 				cfg.getDouble("load-noise-sigma-mw"));
 		Duration tick = cfg.getDuration("meter-tick");
 		startStream(tick);
+		ActorMetrics.ensureSystem(profile(), ctx.getSystem().address().toString());
 		ctx.getLog().info("MeterSimulator stream covering {} neighborhoods", neighborhoods.size());
 	}
 

@@ -2,7 +2,6 @@ package ir.sharifi.townpower.house;
 
 import org.apache.pekko.actor.typed.ActorRef;
 import org.apache.pekko.actor.typed.Behavior;
-import org.apache.pekko.actor.typed.javadsl.AbstractBehavior;
 import org.apache.pekko.actor.typed.javadsl.ActorContext;
 import org.apache.pekko.actor.typed.javadsl.Behaviors;
 import org.apache.pekko.actor.typed.javadsl.Receive;
@@ -10,9 +9,10 @@ import org.apache.pekko.cluster.sharding.typed.javadsl.EntityTypeKey;
 
 import java.util.concurrent.ThreadLocalRandom;
 
-import ir.sharifi.townpower.ActorMetrics;
+import ir.sharifi.townpower.ActorProfile;
 import ir.sharifi.townpower.ActorTrace;
 import ir.sharifi.townpower.NeighborhoodCatalog;
+import ir.sharifi.townpower.TownActorBehavior;
 import ir.sharifi.townpower.NeighborhoodCatalog.Neighborhood;
 import ir.sharifi.townpower.grid.GridProtocol;
 import ir.sharifi.townpower.house.HouseProtocol.Blackout;
@@ -26,7 +26,7 @@ import ir.sharifi.townpower.house.HouseProtocol.Status;
 import ir.sharifi.townpower.http.UiHub;
 
 /** Sharded entity for one Tehran محله (neighborhood). */
-public final class HouseActor extends AbstractBehavior<Command> {
+public final class HouseActor extends TownActorBehavior<Command> {
 
 	public static final EntityTypeKey<Command> TYPE_KEY =
 			EntityTypeKey.create(Command.class, "Neighborhood");
@@ -49,6 +49,11 @@ public final class HouseActor extends AbstractBehavior<Command> {
 			ActorRef<UiHub.Command> uiHub,
 			ActorRef<GridProtocol.Command> grid) {
 		return Behaviors.setup(ctx -> new HouseActor(ctx, neighborhoodId, uiHub, grid));
+	}
+
+	@Override
+	public ActorProfile profile() {
+		return ActorProfile.HOUSE;
 	}
 
 	private HouseActor(
@@ -146,20 +151,12 @@ public final class HouseActor extends AbstractBehavior<Command> {
 		long t0 = System.nanoTime();
 		publish("sleep");
 		touch(t0);
-		ActorMetrics.remove(neighborhoodId);
+		ir.sharifi.townpower.ActorMetrics.remove(neighborhoodId);
 		return Behaviors.stopped();
 	}
 
 	private void touch(long startedNs) {
-		ActorMetrics.record(
-				neighborhoodId,
-				name,
-				districtId,
-				memberId,
-				shardId,
-				status,
-				watts,
-				System.nanoTime() - startedNs);
+		noteHandled(startedNs, neighborhoodId, name, districtId, memberId, shardId, status, watts);
 	}
 
 	private void publish(String action) {

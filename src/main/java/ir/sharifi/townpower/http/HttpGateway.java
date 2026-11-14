@@ -67,6 +67,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import ir.sharifi.townpower.ActorMetrics;
+import ir.sharifi.townpower.ActorProfile;
 import ir.sharifi.townpower.ActorTrace;
 import ir.sharifi.townpower.CriticalSites;
 import ir.sharifi.townpower.house.HouseProtocol.HouseEvent;
@@ -580,6 +581,7 @@ public final class HttpGateway extends AllDirectives {
 			root.put("ts", System.currentTimeMillis());
 			root.put("scope", "local");
 			root.put("liveActors", ActorMetrics.size());
+			putCatalog(root.putArray("catalog"));
 			ArrayNode actors = root.putArray("actors");
 			for (ActorMetrics.Snap s : ActorMetrics.snapshot()) {
 				putActorSnap(actors.addObject(), s);
@@ -601,6 +603,7 @@ public final class HttpGateway extends AllDirectives {
 			root.put("ts", System.currentTimeMillis());
 			root.put("scope", "cluster");
 			root.put("proxyNote", "msgCount/handleNs/approxStateBytes — not OS RAM/CPU");
+			putCatalog(root.putArray("catalog"));
 
 			ArrayNode nodes = root.putArray("nodes");
 			ArrayNode actors = root.putArray("actors");
@@ -672,6 +675,15 @@ public final class HttpGateway extends AllDirectives {
 	}
 
 	private static void putActorSnap(ObjectNode n, ActorMetrics.Snap s) {
+		n.put("kind", s.kind());
+		n.put("title", s.title());
+		n.put("role", s.role());
+		ArrayNode handles = n.putArray("handles");
+		if (s.handles() != null) {
+			for (String h : s.handles()) {
+				handles.add(h);
+			}
+		}
 		n.put("id", s.id());
 		n.put("name", s.name());
 		n.put("districtId", s.districtId());
@@ -684,6 +696,19 @@ public final class HttpGateway extends AllDirectives {
 		n.put("avgHandleNs", s.msgCount() == 0 ? 0 : s.totalHandleNs() / s.msgCount());
 		n.put("lastMsgAt", s.lastMsgAt());
 		n.put("approxStateBytes", s.approxStateBytes());
+	}
+
+	private static void putCatalog(ArrayNode catalog) {
+		for (ActorProfile p : ActorProfile.all()) {
+			ObjectNode n = catalog.addObject();
+			n.put("kind", p.kind());
+			n.put("title", p.title());
+			n.put("role", p.role());
+			ArrayNode handles = n.putArray("handles");
+			for (String h : p.handles()) {
+				handles.add(h);
+			}
+		}
 	}
 
 	/** Live MXBean snapshot for this node (jcmd-style readouts; no dump/JFR side effects). */

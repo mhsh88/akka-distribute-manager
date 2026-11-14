@@ -18,16 +18,24 @@ import org.apache.pekko.cluster.ddata.typed.javadsl.DistributedData;
 import org.apache.pekko.cluster.ddata.typed.javadsl.Replicator;
 import org.apache.pekko.cluster.ddata.typed.javadsl.ReplicatorMessageAdapter;
 
+import ir.sharifi.townpower.ActorMetrics;
+import ir.sharifi.townpower.ActorProfile;
 import ir.sharifi.townpower.ActorTrace;
+import ir.sharifi.townpower.DescribedActor;
 import ir.sharifi.townpower.http.UiHub;
 
 /**
  * Per-node load vote via LWWMap CRDT — Actor Lab merge arcs.
  * shortcut: value = local tell budget this window, not true MW; upgrade to district MW map later.
  */
-public final class LoadShare extends AbstractBehavior<LoadShare.Command> {
+public final class LoadShare extends AbstractBehavior<LoadShare.Command> implements DescribedActor {
 
 	public interface Command {
+	}
+
+	@Override
+	public ActorProfile profile() {
+		return ActorProfile.LOAD_SHARE;
 	}
 
 	public record LocalLoad(int tells) implements Command {
@@ -67,6 +75,7 @@ public final class LoadShare extends AbstractBehavior<LoadShare.Command> {
 		this.replicatorAdapter = new ReplicatorMessageAdapter<>(ctx, ddata.replicator(), Duration.ofSeconds(3));
 		replicatorAdapter.subscribe(KEY, InternalSubscribeResponse::new);
 		timers.startTimerWithFixedDelay(Flush.INSTANCE, Duration.ofSeconds(2));
+		ActorMetrics.ensureSystem(profile(), memberId);
 		ctx.getLog().info("LoadShare CRDT ready key={}", KEY.id());
 	}
 

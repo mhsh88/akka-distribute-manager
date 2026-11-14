@@ -22,8 +22,11 @@ import org.apache.pekko.cluster.sharding.typed.javadsl.ClusterSharding;
 import org.apache.pekko.cluster.typed.ClusterSingleton;
 import org.apache.pekko.cluster.typed.SingletonActor;
 
+import ir.sharifi.townpower.ActorMetrics;
+import ir.sharifi.townpower.ActorProfile;
 import ir.sharifi.townpower.ActorTrace;
 import ir.sharifi.townpower.CriticalSites;
+import ir.sharifi.townpower.DescribedActor;
 import ir.sharifi.townpower.NeighborhoodCatalog;
 import ir.sharifi.townpower.NeighborhoodCatalog.Neighborhood;
 import ir.sharifi.townpower.TownIds;
@@ -41,9 +44,14 @@ import ir.sharifi.townpower.http.UiHub;
  * Cluster singleton supervisor: DSM shed of heavy محله kids, then cascade blackout if needed.
  * Shed children reconnect when district siblings are healthy (margin OK).
  */
-public final class GridController extends AbstractBehavior<Command> {
+public final class GridController extends AbstractBehavior<Command> implements DescribedActor {
 
 	private static final Duration CRITICAL_HOLD = Duration.ofSeconds(6);
+
+	@Override
+	public ActorProfile profile() {
+		return ActorProfile.GRID;
+	}
 
 	private final ClusterSharding sharding;
 	private final ActorRef<UiHub.Command> uiHub;
@@ -112,6 +120,7 @@ public final class GridController extends AbstractBehavior<Command> {
 		this.shedPerTick = cfg.getInt("supervisor-shed-per-tick");
 		timers.startTimerWithFixedDelay(Tick.INSTANCE, Duration.ofMillis(400));
 		String self = ctx.getSystem().address().toString();
+		ActorMetrics.ensureSystem(profile(), self);
 		uiHub.tell(new UiHub.Trace(ActorTrace.crown(self)));
 		ctx.getLog().info(
 				"GridController Tehran {} districts / {} neighborhoods / {} critical (supervisor DSM) crown={}",

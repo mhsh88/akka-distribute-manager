@@ -20,8 +20,11 @@ import org.apache.pekko.cluster.typed.Subscribe;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import ir.sharifi.townpower.ActorMetrics;
+import ir.sharifi.townpower.ActorProfile;
 import ir.sharifi.townpower.ActorTrace;
 import ir.sharifi.townpower.CborSerializable;
+import ir.sharifi.townpower.DescribedActor;
 import ir.sharifi.townpower.grid.GridProtocol;
 import ir.sharifi.townpower.house.HouseActor;
 import ir.sharifi.townpower.house.HouseProtocol;
@@ -29,9 +32,14 @@ import ir.sharifi.townpower.house.HouseProtocol.HouseEvent;
 import ir.sharifi.townpower.sim.MeterSimulator;
 
 /** Local UI gateway: house/grid events, receptionist fan-out, HTTP snapshots. */
-public final class UiHub extends AbstractBehavior<UiHub.Command> {
+public final class UiHub extends AbstractBehavior<UiHub.Command> implements DescribedActor {
 
 	public static final ServiceKey<Command> SERVICE_KEY = ServiceKey.create(Command.class, "UiHub");
+
+	@Override
+	public ActorProfile profile() {
+		return ActorProfile.UI_HUB;
+	}
 
 	public interface Command extends CborSerializable {
 	}
@@ -176,6 +184,7 @@ public final class UiHub extends AbstractBehavior<UiHub.Command> {
 					.build();
 		}), "deadLetterWatch");
 		this.http = HttpGateway.start(ctx.getSystem(), ctx.getSelf());
+		ActorMetrics.ensureSystem(profile(), ctx.getSystem().address().toString());
 	}
 
 	@Override

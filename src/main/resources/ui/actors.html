@@ -55,6 +55,21 @@
     table.grid th:hover { color: var(--text); }
     table.grid td.name { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
     .split { display: grid; grid-template-columns: 1fr 1fr; gap: var(--gap); }
+    td.actor-name {
+      cursor: help; color: var(--chart); max-width: 180px;
+      overflow: hidden; text-overflow: ellipsis;
+    }
+    #tip {
+      position: fixed; z-index: 50; display: none; width: min(360px, calc(100vw - 24px));
+      padding: 12px 14px; border-radius: var(--radius-card);
+      border: 1px solid var(--border); background: var(--raised); color: var(--text);
+      box-shadow: 0 8px 24px rgba(0,0,0,.45); pointer-events: none;
+      direction: rtl; text-align: right;
+    }
+    #tip .k { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+    #tip .t { font-size: 14px; font-weight: 500; margin-bottom: 6px; }
+    #tip .r { font-size: 12px; color: var(--muted); line-height: 1.45; margin-bottom: 8px; }
+    #tip ul { margin: 0; padding: 0 16px 0 0; font-size: 11px; font-family: var(--mono); color: var(--text); line-height: 1.5; }
     @media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
   </style>
 </head>
@@ -119,6 +134,7 @@
           <thead>
             <tr>
               <th data-k="id">id</th>
+              <th data-k="kind">kind</th>
               <th data-k="memberId">node</th>
               <th data-k="shardId">shard</th>
               <th data-k="status">status</th>
@@ -135,6 +151,7 @@
     </div>
   </div>
 </div>
+<div id="tip" role="tooltip"></div>
 <script>
 (function () {
   const state = {
@@ -145,9 +162,37 @@
     timer: null,
     filter: "",
     nodeFilter: "ALL",
-    sort: "msgRate"
+    sort: "msgRate",
+    byId: new Map()
   };
   const $ = (id) => document.getElementById(id);
+  const tip = $("tip");
+  function showTip(a, ev) {
+    if (!a) return;
+    const handles = (a.handles || []).map((h) => "<li>" + escapeHtml(h) + "</li>").join("");
+    tip.innerHTML =
+      "<div class='k'>" + escapeHtml(a.kind || "") + "</div>" +
+      "<div class='t'>" + escapeHtml(a.title || a.name || a.id) + "</div>" +
+      "<div class='r'>" + escapeHtml(a.role || "") + "</div>" +
+      (handles ? "<ul>" + handles + "</ul>" : "");
+    tip.style.display = "block";
+    moveTip(ev);
+  }
+  function moveTip(ev) {
+    const pad = 12;
+    let x = ev.clientX + pad;
+    let y = ev.clientY + pad;
+    const w = tip.offsetWidth || 320;
+    const h = tip.offsetHeight || 160;
+    if (x + w > window.innerWidth - pad) x = ev.clientX - w - pad;
+    if (y + h > window.innerHeight - pad) y = ev.clientY - h - pad;
+    tip.style.left = Math.max(pad, x) + "px";
+    tip.style.top = Math.max(pad, y) + "px";
+  }
+  function hideTip() { tip.style.display = "none"; }
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c]));
+  }
   const shortNode = (m) => {
     if (!m) return "—";
     const at = m.indexOf("@");
@@ -200,6 +245,7 @@
       });
       state.prev = nextPrev;
       state.data = j;
+      state.byId = new Map((j.actors || []).map((a) => [a.kind + "|" + a.memberId + "|" + a.id, a]));
       render();
     } catch (e) {
       $("hdr-sub").textContent = "fetch /api/actors failed";
@@ -272,9 +318,11 @@
     renderBars($("chart-cpu"), list.slice().sort((a, b) => (b.msgRate || 0) - (a.msgRate || 0)), "msgRate", "cpu");
     renderBars($("chart-ram"), list.slice().sort((a, b) => (b.approxStateBytes || 0) - (a.approxStateBytes || 0)), "approxStateBytes", "ram");
 
-    $("tbody").innerHTML = list.map((a) =>
-      "<tr>" +
-      "<td class='name' title='" + (a.name || "") + "'>" + a.id + "</td>" +
+    $("tbody").innerHTML = list.map((a) => {
+      const key = a.kind + "|" + a.memberId + "|" + a.id;
+      return "<tr>" +
+      "<td class='actor-name' data-key='" + escapeHtml(key) + "'>" + escapeHtml(a.id) + "</td>" +
+      "<td>" + escapeHtml(a.kind || "") + "</td>" +
       "<td>" + shortNode(a.memberId) + "</td>" +
       "<td>" + a.shardId + "</td>" +
       "<td>" + a.status + "</td>" +
@@ -283,8 +331,13 @@
       "<td>" + a.approxStateBytes + "</td>" +
       "<td>" + a.msgCount + "</td>" +
       "<td>" + (a.watts == null ? "—" : Number(a.watts).toFixed(1)) + "</td>" +
-      "</tr>"
-    ).join("") || "<tr><td colspan='9' class='muted'>no live actors yet</td></tr>";
+      "</tr>";
+    }).join("") || "<tr><td colspan='10' class='muted'>no live actors yet</td></tr>";
+    $("tbody").querySelectorAll(".actor-name").forEach((el) => {
+      el.addEventListener("mouseenter", (ev) => showTip(state.byId.get(el.dataset.key), ev));
+      el.addEventListener("mousemove", moveTip);
+      el.addEventListener("mouseleave", hideTip);
+    });
   }
 
   tick();
