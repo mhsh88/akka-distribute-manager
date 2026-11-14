@@ -113,9 +113,10 @@
         <button type="button" class="tab" data-tab="memory">Memory</button>
         <button type="button" class="tab" data-tab="threads">Threads</button>
         <button type="button" class="tab" data-tab="gc">GC / Runtime</button>
+        <button type="button" class="tab" data-tab="actions">Actions</button>
       </div>
       <div class="grow"></div>
-      <input class="ctl" id="q" type="search" placeholder="filter threads…" dir="ltr"/>
+      <input class="ctl" id="q" type="search" placeholder="filter threads / props…" dir="ltr"/>
       <select class="ctl" id="interval" title="poll">
         <option value="1000">1s</option>
         <option value="2000">2s</option>
@@ -221,14 +222,55 @@
           <table class="grid"><thead><tr><th>name</th><th>count</th><th>time</th><th>pools</th></tr></thead>
             <tbody id="gc-body"></tbody></table>
         </div>
+        <div class="card">
+          <div class="panel-h" style="border:0;padding:0 0 10px">
+            <h2 style="margin:0;font-size:var(--fs-section);font-weight:500">System properties <span class="muted small mono" id="props-count"></span></h2>
+            <p class="muted small">full dump · may include secrets · filter via search box</p>
+          </div>
+          <div class="scroll" style="max-height:360px;border:0">
+            <table class="grid"><thead><tr><th>key</th><th>value</th></tr></thead>
+              <tbody id="props"></tbody></table>
+          </div>
+        </div>
+        <div class="card">
+          <div class="panel-h" style="border:0;padding:0 0 10px"><h2 style="margin:0;font-size:var(--fs-section);font-weight:500">VM inputArguments</h2></div>
+          <pre class="stack" id="args" style="max-height:280px">—</pre>
+        </div>
+      </section>
+
+      <section class="pane" id="tab-actions">
         <div class="kpis4">
           <div class="card">
-            <div class="panel-h" style="border:0;padding:0 0 10px"><h2 style="margin:0;font-size:var(--fs-section);font-weight:500">Props</h2></div>
-            <div class="kv" id="props"></div>
+            <div class="panel-h" style="border:0;padding:0 0 10px">
+              <h2 style="margin:0;font-size:var(--fs-section);font-weight:500">Heap dump</h2>
+              <p class="muted small">HotSpot live objects → .hprof under dumpsDir</p>
+            </div>
+            <button type="button" class="btn primary" id="btn-heap">Dump heap</button>
+            <div class="small muted mono" id="heap-msg" style="margin-top:10px">—</div>
           </div>
           <div class="card" style="grid-column: span 3;">
-            <div class="panel-h" style="border:0;padding:0 0 10px"><h2 style="margin:0;font-size:var(--fs-section);font-weight:500">VM inputArguments</h2></div>
-            <pre class="stack" id="args" style="max-height:280px">—</pre>
+            <div class="panel-h" style="border:0;padding:0 0 10px">
+              <h2 style="margin:0;font-size:var(--fs-section);font-weight:500">JFR</h2>
+              <p class="muted small" id="jfr-status">Flight Recorder</p>
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px">
+              <button type="button" class="btn primary" id="btn-jfr-start">Start</button>
+              <button type="button" class="btn" id="btn-jfr-dump">Dump</button>
+              <button type="button" class="btn on" id="btn-jfr-stop">Stop + dump</button>
+            </div>
+            <div class="small muted mono" id="jfr-msg" style="margin-top:10px">—</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="panel-h" style="border:0;padding:0 0 10px">
+            <h2 style="margin:0;font-size:var(--fs-section);font-weight:500">Artifacts</h2>
+            <p class="muted small mono" id="dumps-dir">.local-run/jvm-dumps</p>
+          </div>
+          <div class="scroll" style="max-height:320px;border:0">
+            <table class="grid">
+              <thead><tr><th>name</th><th>size</th><th>mtime</th><th></th></tr></thead>
+              <tbody id="artifacts"></tbody>
+            </table>
           </div>
         </div>
       </section>
@@ -316,7 +358,38 @@
   $("q").addEventListener("input", (e) => {
     state.filter = e.target.value.trim().toLowerCase();
     renderThreads();
+    renderGcRuntime();
   });
+  $("btn-heap").addEventListener("click", async () => {
+    if (!confirm("Write live heap dump (.hprof) for this node?")) return;
+    $("heap-msg").textContent = "dumping…";
+    try {
+      const r = await fetch("/api/jvm/heap-dump", { method: "POST" });
+      const j = await r.json();
+      $("heap-msg").textContent = j.ok
+        ? j.name + " · " + fmtBytes(j.size)
+        : ("fail: " + (j.error || r.status));
+      tick(false);
+    } catch (e) {
+      $("heap-msg").textContent = String(e);
+    }
+  });
+  async function jfrPost(path, label) {
+    $(label).textContent = "…";
+    try {
+      const r = await fetch(path, { method: "POST" });
+      const j = await r.json();
+      $(label).textContent = j.ok
+        ? (j.name ? j.name + " · " + fmtBytes(j.size) : "ok")
+        : ("fail: " + (j.error || r.status));
+      tick(false);
+    } catch (e) {
+      $(label).textContent = String(e);
+    }
+  }
+  $("btn-jfr-start").addEventListener("click", () => jfrPost("/api/jvm/jfr/start", "jfr-msg"));
+  $("btn-jfr-dump").addEventListener("click", () => jfrPost("/api/jvm/jfr/dump", "jfr-msg"));
+  $("btn-jfr-stop").addEventListener("click", () => jfrPost("/api/jvm/jfr/stop", "jfr-msg"));
   document.querySelectorAll("#thr-table th[data-sort]").forEach((th) => {
     th.addEventListener("click", () => {
       const key = th.dataset.sort;
@@ -540,14 +613,32 @@
 
   function renderGcRuntime() {
     const j = state.data;
+    if (!j) return;
     $("gc-body").innerHTML = (j.gc || []).map((g) =>
       "<tr><td>" + escapeHtml(g.name) + "</td><td>" + g.count + "</td><td>" + g.timeMs +
       " ms</td><td>" + escapeHtml((g.pools || []).join(", ")) + "</td></tr>"
     ).join("");
-    $("props").innerHTML = Object.entries(j.props || {}).map(([k, v]) =>
-      "<div><span>" + escapeHtml(k) + "</span><b>" + escapeHtml(v) + "</b></div>"
-    ).join("");
+    const entries = Object.entries(j.props || {});
+    const filtered = state.filter
+      ? entries.filter(([k, v]) => k.toLowerCase().includes(state.filter) || String(v).toLowerCase().includes(state.filter))
+      : entries;
+    $("props-count").textContent = filtered.length + "/" + (j.propsCount || entries.length);
+    $("props").innerHTML = filtered.map(([k, v]) =>
+      "<tr><td class='name' title='" + escapeAttr(k) + "'>" + escapeHtml(k) +
+      "</td><td style='white-space:normal;word-break:break-all'>" + escapeHtml(v) + "</td></tr>"
+    ).join("") || "<tr><td colspan='2' class='muted'>no props</td></tr>";
     $("args").textContent = (j.inputArguments || []).join("\n") || "(none)";
+
+    const jfr = j.jfr || {};
+    $("jfr-status").textContent = "state " + (jfr.state || "NONE") +
+      (jfr.recording ? " · age " + fmtMs(jfr.ageMs || 0) : "") +
+      (jfr.lastPath ? " · last " + jfr.lastPath : "");
+    $("dumps-dir").textContent = j.dumpsDir || ".local-run/jvm-dumps";
+    $("artifacts").innerHTML = (j.artifacts || []).map((a) =>
+      "<tr><td class='name'>" + escapeHtml(a.name) + "</td><td>" + fmtBytes(a.size) +
+      "</td><td>" + new Date(a.mtime).toLocaleString() +
+      "</td><td><a href='/api/jvm/artifact/" + encodeURIComponent(a.name) + "'>download</a></td></tr>"
+    ).join("") || "<tr><td colspan='4' class='muted'>no dumps yet</td></tr>";
   }
 
   function escapeHtml(s) {

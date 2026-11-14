@@ -1,5 +1,6 @@
 package ir.sharifi.townpower.http;
 
+import java.io.IOException;
 import java.lang.management.BufferPoolMXBean;
 import java.lang.management.ClassLoadingMXBean;
 import java.lang.management.CompilationMXBean;
@@ -11,18 +12,30 @@ import java.lang.management.MemoryUsage;
 import java.lang.management.RuntimeMXBean;
 import java.lang.management.ThreadInfo;
 import java.lang.management.ThreadMXBean;
+import java.nio.file.DirectoryStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+
+import com.sun.management.HotSpotDiagnosticMXBean;
+
+import jdk.jfr.Configuration;
+import jdk.jfr.Recording;
+import jdk.jfr.RecordingState;
 
 import org.apache.pekko.actor.typed.ActorRef;
 import org.apache.pekko.actor.typed.ActorSystem;
@@ -76,6 +89,9 @@ public final class HttpGateway extends AllDirectives {
 	private final AtomicLong sleepsInWindow = new AtomicLong(0);
 	private final AtomicInteger deadTotal = new AtomicInteger(0);
 	private long lastHeatPushMs;
+	private final Object jfrLock = new Object();
+	private volatile Recording jfrRecording;
+	private volatile String jfrLastPath = "";
 
 	static HttpGateway start(ActorSystem<?> system, ActorRef<UiHub.Command> uiHub) {
 		return new HttpGateway(system, uiHub);
@@ -296,7 +312,14 @@ public final class HttpGateway extends AllDirectives {
 				pathPrefix("jvm", () -> concat(
 						pathEndOrSingleSlash(() -> get(() -> complete(jsonResponse(jvmJson())))),
 						pathPrefix("thread", () -> path(org.apache.pekko.http.javadsl.server.PathMatchers.segment(), idSeg ->
-								get(() -> complete(jsonResponse(threadStackJson(idSeg)))))))),
+								get(() -> complete(jsonResponse(threadStackJson(idSeg)))))),
+						path("heap-dump", () -> post(() -> complete(jsonResponse(heapDumpJson())))),
+						pathPrefix("jfr", () -> concat(
+								path("start", () -> post(() -> complete(jsonResponse(jfrStartJson())))),
+								path("stop", () -> post(() -> complete(jsonResponse(jfrStopJson(true))))),
+								path("dump", () -> post(() -> complete(jsonResponse(jfrStopJson(false))))))),
+						pathPrefix("artifact", () -> path(org.apache.pekko.http.javadsl.server.PathMatchers.segment(), name ->
+								get(() -> getJvmArtifact(name)))))),
 				pathPrefix("lab", () -> concat(
 						path("dead-demo", () -> post(() -> {
 							uiHub.tell(UiHub.FireDeadDemo.INSTANCE);
@@ -552,14 +575,18 @@ public final class HttpGateway extends AllDirectives {
 				args.add(a);
 			}
 			ObjectNode props = root.putObject("props");
-			for (String key : List.of(
-					"java.version", "java.home", "java.vm.name", "os.name", "os.arch", "os.version",
-					"user.dir", "file.encoding", "user.timezone")) {
-				String v = System.getProperty(key);
-				if (v != null) {
-					props.put(key, v);
-				}
+			Properties all = System.getProperties();
+			TreeMap<String, String> sorted = new TreeMap<>();
+			for (String name : all.stringPropertyNames()) {
+				sorted.put(name, all.getProperty(name, ""));
 			}
+			for (Map.Entry<String, String> e : sorted.entrySet()) {
+				props.put(e.getKey(), e.getValue());
+			}
+			root.put("propsCount", sorted.size());
+			putJfrStatus(root.putObject("jfr"));
+			putArtifacts(root.putArray("artifacts"));
+			root.put("dumpsDir", dumpDir().toAbsolutePath().toString());
 
 			MemoryMXBean mem = ManagementFactory.getMemoryMXBean();
 			putMem(root.putObject("heap"), mem.getHeapMemoryUsage());
@@ -708,6 +735,172 @@ public final class HttpGateway extends AllDirectives {
 		} catch (Exception e) {
 			return "{\"error\":true}";
 		}
+	}
+
+	private Path dumpDir() throws IOException {
+		Path dir = Path.of(".local-run", "jvm-dumps");
+		Files.createDirectories(dir);
+		return dir;
+	}
+
+	private String newDumpName(String prefix, String ext) {
+		long pid = ManagementFactory.getRuntimeMXBean().getPid();
+		return prefix + "-" + pid + "-" + System.currentTimeMillis() + "." + ext;
+	}
+
+	private String heapDumpJson() {
+		try {
+			Path file = dumpDir().resolve(newDumpName("heap", "hprof")).toAbsolutePath().normalize();
+			HotSpotDiagnosticMXBean diag = ManagementFactory.getPlatformMXBean(HotSpotDiagnosticMXBean.class);
+			diag.dumpHeap(file.toString(), true);
+			ObjectNode root = mapper.createObjectNode();
+			root.put("ok", true);
+			root.put("path", file.toString());
+			root.put("name", file.getFileName().toString());
+			root.put("size", Files.size(file));
+			root.put("live", true);
+			return mapper.writeValueAsString(root);
+		} catch (Exception e) {
+			system.log().warn("heap dump failed: {}", e.toString());
+			return "{\"ok\":false,\"error\":" + jsonQuote(e.toString()) + "}";
+		}
+	}
+
+	private String jfrStartJson() {
+		synchronized (jfrLock) {
+			try {
+				Recording current = jfrRecording;
+				if (current != null && current.getState() == RecordingState.RUNNING) {
+					ObjectNode root = mapper.createObjectNode();
+					root.put("ok", false);
+					root.put("error", "already recording");
+					putJfrStatus(root.putObject("jfr"));
+					return mapper.writeValueAsString(root);
+				}
+				if (current != null) {
+					current.close();
+					jfrRecording = null;
+				}
+				Recording r = new Recording(Configuration.getConfiguration("default"));
+				r.setName("town-power-" + ManagementFactory.getRuntimeMXBean().getPid());
+				r.setToDisk(true);
+				r.setMaxSize(64L * 1024 * 1024);
+				r.start();
+				jfrRecording = r;
+				ObjectNode root = mapper.createObjectNode();
+				root.put("ok", true);
+				putJfrStatus(root.putObject("jfr"));
+				return mapper.writeValueAsString(root);
+			} catch (Exception e) {
+				system.log().warn("jfr start failed: {}", e.toString());
+				return "{\"ok\":false,\"error\":" + jsonQuote(e.toString()) + "}";
+			}
+		}
+	}
+
+	/** @param stopIfRunning true = stop+dump+close; false = dump while running if possible */
+	private String jfrStopJson(boolean stopIfRunning) {
+		synchronized (jfrLock) {
+			try {
+				Recording r = jfrRecording;
+				if (r == null || r.getState() == RecordingState.CLOSED) {
+					return "{\"ok\":false,\"error\":\"no recording\"}";
+				}
+				Path file = dumpDir().resolve(newDumpName("jfr", "jfr")).toAbsolutePath().normalize();
+				if (stopIfRunning) {
+					if (r.getState() == RecordingState.RUNNING) {
+						r.stop();
+					}
+					r.dump(file);
+					r.close();
+					jfrRecording = null;
+				} else {
+					r.dump(file);
+				}
+				jfrLastPath = file.toString();
+				ObjectNode root = mapper.createObjectNode();
+				root.put("ok", true);
+				root.put("path", file.toString());
+				root.put("name", file.getFileName().toString());
+				root.put("size", Files.size(file));
+				root.put("stopped", stopIfRunning);
+				putJfrStatus(root.putObject("jfr"));
+				return mapper.writeValueAsString(root);
+			} catch (Exception e) {
+				system.log().warn("jfr dump/stop failed: {}", e.toString());
+				return "{\"ok\":false,\"error\":" + jsonQuote(e.toString()) + "}";
+			}
+		}
+	}
+
+	private void putJfrStatus(ObjectNode jfr) {
+		Recording r = jfrRecording;
+		jfr.put("recording", r != null && r.getState() == RecordingState.RUNNING);
+		jfr.put("state", r == null ? "NONE" : r.getState().toString());
+		jfr.put("name", r == null ? "" : String.valueOf(r.getName()));
+		jfr.put("lastPath", jfrLastPath == null ? "" : jfrLastPath);
+		if (r != null && r.getStartTime() != null) {
+			Instant start = r.getStartTime();
+			jfr.put("startTime", start.toString());
+			jfr.put("ageMs", Math.max(0, System.currentTimeMillis() - start.toEpochMilli()));
+		} else {
+			jfr.put("startTime", "");
+			jfr.put("ageMs", 0);
+		}
+	}
+
+	private void putArtifacts(ArrayNode arts) {
+		try {
+			Path dir = dumpDir();
+			List<Path> files = new ArrayList<>();
+			try (DirectoryStream<Path> ds = Files.newDirectoryStream(dir)) {
+				for (Path p : ds) {
+					if (Files.isRegularFile(p)) {
+						files.add(p);
+					}
+				}
+			}
+			files.sort(Comparator.comparingLong((Path p) -> {
+				try {
+					return Files.getLastModifiedTime(p).toMillis();
+				} catch (IOException e) {
+					return 0L;
+				}
+			}).reversed());
+			int n = 0;
+			for (Path p : files) {
+				if (n++ >= 40) {
+					break;
+				}
+				ObjectNode a = arts.addObject();
+				a.put("name", p.getFileName().toString());
+				a.put("path", p.toAbsolutePath().toString());
+				a.put("size", Files.size(p));
+				a.put("mtime", Files.getLastModifiedTime(p).toMillis());
+			}
+		} catch (Exception e) {
+			system.log().warn("list dumps failed: {}", e.toString());
+		}
+	}
+
+	private Route getJvmArtifact(String name) {
+		try {
+			if (name == null || name.isBlank() || name.contains("..") || name.contains("/") || name.contains("\\")) {
+				return complete(StatusCodes.BAD_REQUEST, "bad name");
+			}
+			Path dir = dumpDir().toAbsolutePath().normalize();
+			Path file = dir.resolve(name).normalize();
+			if (!file.startsWith(dir) || !Files.isRegularFile(file)) {
+				return complete(StatusCodes.NOT_FOUND, "missing");
+			}
+			return getFromFile(file.toFile());
+		} catch (Exception e) {
+			return complete(StatusCodes.INTERNAL_SERVER_ERROR, e.toString());
+		}
+	}
+
+	private static String jsonQuote(String s) {
+		return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
 	}
 
 	private static void putMem(ObjectNode n, MemoryUsage u) {
